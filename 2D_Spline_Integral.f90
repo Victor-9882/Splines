@@ -38,7 +38,7 @@
           !Massas
           Mtot = 1.99d0
           m = 1.0d0
-          mu = 0.15d0
+          mu = 0.50d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
