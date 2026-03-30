@@ -30,14 +30,11 @@
 
       READ(20,*) NPARAM
           DO I = 1, NPARAM
-           READ(20,*) nnz(I), nng(I)
+           READ(20,*) nnz(I), nng(I), nnv(I)
           END DO
     CLOSE(20)
         
 
-              Nz = Nnz(ii)
-          Ng = Nng (ii)
-          Nv = Nnv (ii)
      !Parâmetros
           !Massas
           Mtot = 1.99d0
@@ -65,6 +62,11 @@
             NCOL = 2
         do ii = 1, NPARAM
             print*, ii
+
+            
+          Nz = Nnz (ii)
+          Ng = Nng (ii)
+          Nv = Nnv (ii)
       
           !Número de pontos de Gauss para integração em cada variável
           
@@ -99,13 +101,22 @@
         !CALL legauss(0.d0,3.d0,Nmg,gv,dY,1.d-15)
            
 
+        call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
+        call COLLOC(IW,2,N_intervalG,Y,YG)  
+
+        do i=1, 2*N_intervalG
+           gv(i+1)=YG(i)
+        enddo
+
+        gv(1) = 0.d0
+        gv(nmg) = 3.d0
         
-        call setgaulag(0.d0,Nmg,gv,dY)
+        !call setgaulag(0.d0,Nmg,gv,dY)
 
         
-        do i=1,nmg
-          gv(i)=2.d0/gam0*gv(i)
-        end do
+        !do i=1,nmg
+          !gv(i)=2.d0/gam0*gv(i)
+        !end do
 
         !do i=1, nmg
            !gv(i)=Y(i)
@@ -128,10 +139,11 @@
 
         !Pesos e absissas de Gauss-Legendre para cada variável
 	      CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
+        CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
         !CALL legauss(0.d0,gv(nmg),Ng,Y,dY,1.d-15)
         !call setgaulag(0.d0,Ng,Y,dY)
 
-        CALL legauss(-1.d0,1.d0,Ng,Y,dY,1.d-15)
+        !CALL legauss(-1.d0,1.d0,Ng,Y,dY,1.d-15)
 
         !gam0 = 12.0d0
         !do i=1,Ng
@@ -168,11 +180,11 @@
                     v = W(r)
                     dV = DW (r)
         ! gamma variando de 0 a infinito
-                    !gp = Y(p)
-                    !dgp = dY(p)
+                    gp = Y(p)
+                    dgp = dY(p)
 
-                    gp = 3*(1.d0+Y(p))/(1.d0-Y(p))
-                    dgp = 3*(2.d0/((1.d0-Y(p))**2))*dY(p)
+                    !gp = 3*(1.d0+Y(p))/(1.d0-Y(p))
+                    !dgp = 3*(2.d0/((1.d0-Y(p))**2))*dY(p)
 
         ! theta z’ variando de z até 1
                      dzq=(1.d0-z)*dX(q)
