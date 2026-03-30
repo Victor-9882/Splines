@@ -62,7 +62,7 @@
         WRITE(12, 110)
 110     FORMAT(/, 'NMZ           NMG            ALFA')
 
-        WRITE(13, '(A)') 'NMG NMZ ALFA'
+        WRITE(13, '(A)') '#NMG NMZ ALFA'
 
 
       do ii = 1, NPARAM
