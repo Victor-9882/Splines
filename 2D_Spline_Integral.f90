@@ -1,36 +1,41 @@
  IMPLICIT DOUBLE PRECISION(a-h,o-z)
-      PARAMETER(NMG=20, NMZ=20, NMA = NMG*NMZ,LWORK=10*NMA)   
-	  COMPLEX*16 IMAG     
-      	DIMENSION XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA),AUNIT(NMA,NMA) &
-         ,VR(NMA,NMA),VL(NMA,2*NMA), BETAA(NMA),VAUX(NMA),WR(NMA)&
-         ,WI(NMA),WORK(LWORK),zv(nmz+1), gv(300), splz(nmz), splg(nmg) &
-         ,splz_at(nmz), dzv(nmz),dgv(nmg), ALPHAR (NMA), ALPHAI(NMA) &
-         ,BETA (NMA), a(nma, nma), b(nma, nma), c(nma, nma), XG (NMA), YG(NMA)
-       COMMON/PARAM/PI
-       COMMON/ALPHAINT/X(1000),DX(1000), Y(1000),DY(1000) &
+
+      INTEGER :: NMG, NMZ, NMA, LWORK
+      DOUBLE PRECISION, ALLOCATABLE :: XMATRIX(:,:), ZMATRIX(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: VR(:,:), VL(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: WR(:), WI(:), WORK(:)
+      DOUBLE PRECISION, ALLOCATABLE :: zv(:), splz(:), splg(:), gv(:)
+      DOUBLE PRECISION, ALLOCATABLE :: dzv(:), dgv(:), ALPHAR(:), ALPHAI(:)
+      DOUBLE PRECISION, ALLOCATABLE :: BETA(:), c(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: XG(:), YG(:)
+
+      INTEGER, ALLOCATABLE :: ipvt(:)
+      COMMON/PARAM/PI
+      COMMON/ALPHAINT/X(1000),DX(1000), Y(1000),DY(1000) &
        , W(1000),DW(1000), Nz, Ng, Nv, det (1000)
-       INTEGER :: ii, jj, i, j, k, l & 
-       ,index1, index2, p, q, r, NPARAM
-        INTEGER :: ipvt(NMA), N_intervalZ, NCOL, N_intervalG
-       INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT
-       double precision LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
+      INTEGER :: ii, jj, i, j, k, l & 
+       ,index1, index2, p, q, r, NPARAM, N_intervalZ, NCOL, N_intervalG
+      INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT
+      DOUBLE PRECISION :: LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
             , IntegralV, num2, max_gamma_visualizacao
-       CHARACTER(LEN=200) :: filename
-       INTEGER :: Nnz (100), Nng (100), Nnv (100)
+
+      INTEGER :: Nnz (100), Nng (100), Nnv (100) 
+
 
         open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
-        open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
         open (unit = 11, file = "autovetores.dat",STATUS="UNKNOWN")
-        open (unit = 14, file='erros.dat', status='unknown')
+        open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
+        open (unit = 13, file = "plotalfa.dat",STATUS="UNKNOWN")
+        open (unit = 14, file = 'erros.dat', status='unknown')
         open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
-    
-		    IMAG=DCMPLX(0.D0,1.D0)
+
         e = 0.000001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
+      !Leitura Inputs
       READ(20,*) NPARAM
           DO I = 1, NPARAM
-           READ(20,*) nnz(I), nng(I), nnv(I)
+           READ(20,*) Nng(i), Nnz(i)
           END DO
     CLOSE(20)
         
@@ -38,33 +43,64 @@
           !Massas
           Mtot = 1.99d0
           m = 1.0d0
-          mu = 0.50d0
+          mu = 0.15d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
+
+          Nz = 60
+          Ng = 60
+          Nv = 60
           !print*,"a"
-          WRITE(10, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
-          WRITE(10, '(A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10)') &
+
+        WRITE(12, *) "------------------Analiticamente--------------------"
+        WRITE(12, '(A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10)') &
+         & "Mtot: ", Mtot, " m: ", m, " mu: ", mu, " kappa: ", kappa, " e", e, " gam0", gam0
+        WRITE(12, '(A, I0, A, I0)') "nz: ", nz, " ng: ", ng
+
+        
+        WRITE(12, 110)
+110     FORMAT(/, 'NMZ           NMG            ALFA')
+
+        WRITE(13, '(A)') 'NMG NMZ ALFA'
+
+
+      do ii = 1, NPARAM
+
+      NMG = Nng(ii)
+      NMZ = Nnz(ii)
+
+      NMA = NMG * NMZ
+      LWORK = 10 * NMA
+
+      WRITE(10, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
+      WRITE(10, '(A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10)') &
          & "Mtot: ", Mtot, " m: ", m, " mu: ", mu, " kappa: ", kappa, " e", e, " gam0", gam0
           WRITE(10, *) "--------------------------------------------------"
 
-          WRITE(12, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
-          WRITE(12, '(A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10)') &
-         & "Mtot: ", Mtot, " m: ", m, " mu: ", mu, " kappa: ", kappa, " e", e, " gam0", gam0
-          WRITE(12, *) "--------------------------------------------------"
+     
+    !ALOCAR VARIÁVEIS
+      ALLOCATE( XMATRIX(NMA, NMA), ZMATRIX(NMA, NMA))
+      ALLOCATE( VR(NMA, NMA), VL(NMA, 2*NMA) )
+      ALLOCATE( WR(NMA), WI(NMA), WORK(LWORK) )
+      ALLOCATE( zv(NMZ + 1), gv(NMG+1) )
+      ALLOCATE( splz(NMZ), splg(NMG))
+      ALLOCATE( ALPHAR(NMA), ALPHAI(NMA), BETA(NMA) )
+      ALLOCATE( c(NMA, NMA) )
+      ALLOCATE( XG(NMA), YG(NMA) )
+       
+      ALLOCATE( ipvt(NMA) )
+          
+
+
+          
           !print*, Mtot, m, mu, kappa
 
             iw = 14
             N_intervalZ = (NMZ-1)/2
             N_intervalG = (NMG-1)/2
-            NCOL = 2
-        do ii = 1, NPARAM
-            !print*, ii
-      
-          !Número de pontos de Gauss para integração em cada variável
-          Nz = Nnz(ii)
-          Ng = Nng (ii)
-          Nv = Nnv (ii)
+            NCOL = 2    
+
           
          
       !Contrução das malhas
@@ -388,7 +424,6 @@
         END DO
       
         WRITE(10, '(A,I0,A,I0,A,I0,A)') "autovalores_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
-        WRITE(12, '(A,I0,A,I0,A,I0,A)') "Analiticamente.Collocation.autovalores_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
           
 	do I = 1, NMA
             WRITE(10,'(I4,2X,F20.12,2X,F20.12)') i, wr(i), wi(i)
@@ -397,9 +432,13 @@
       WRITE(10, *) ""
       Alfa = 1.0d0 / (wr(1) * 16.0d0 * PI)
       WRITE(10, '(A, F20.10)') "Valor de Alfa: ", Alfa
-      WRITE(12, '(A, F20.10)') "Valor de Alfa: ", Alfa
+      WRITE(12, 120) NMZ, NMG, Alfa
+120        FORMAT(I5, 9X, I5, 11X, F10.8)
+      WRITE(13, 130) NMG, NMZ, Alfa
+130    FORMAT(I4, 1X, I4, 1X, F22.15)
 
-      WRITE(10, '(9999ES16.8)') (vr(J,1), J=1, NMA)
+
+      !WRITE(10, '(9999ES16.8)') (vr(J,1), J=1, NMA)
 
       !Autovetores
       !Contrução dos termos cij para dps fazer o sum cij * Spline
@@ -466,14 +505,17 @@
 
           end do
 
-
-
+      DEALLOCATE(XMATRIX, ZMATRIX, WORK, VR, VL, WR, WI, splz)
+      DEALLOCATE(splg, ALPHAR, ALPHAI, BETA, c, XG, YG, gv, zv)
+      DEALLOCATE(IPVT)
+      
 
       end do
 
       
       CLOSE(10)
       CLOSE(12)
+      close(13)
 10     FORMAT(11E12.4)
 18     format(5e15.6)
 20     FORMAT(A70)
