@@ -15,7 +15,7 @@
         INTEGER ipvt(NMA), N_intervalG, N_intervalZ, NCOL
        INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT
        double precision LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
-            , IntegralV, num2, max_gamma_visualizacao, Numerador
+            , IntegralV, num2, max_gamma_visualizacao, Numerador, m1, m2
        CHARACTER(LEN=200) :: filename
        INTEGER :: Nnz (100), Nng (100), Nnv (100)
 
@@ -38,10 +38,6 @@
           !Massas
           Mtot = 1.99d0
           m = 1.0d0
-          m1 = 1.0d0
-          m2 = 1.0d0
-          mbar = (m1+m2)/2
-          delta = (m2-m1)/2
           mu = 0.15d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
@@ -53,10 +49,11 @@
           "m: ", m
           WRITE(10, *) "--------------------------------------------------"
 
+          WRITE(12, *) "-----Splines Vetorial Massas Iguais------------------------"
           WRITE(12, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
           WRITE(12, '(A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10, A, F20.10)') &
-         & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e", e, " gam0", gam0, &
-          "m: ", m
+        & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e", e, " gam0", gam0, &
+          "m: ", m 
           WRITE(12, *) "--------------------------------------------------"
           !print*, Mtot, m, mu, kappa
 
@@ -210,8 +207,8 @@
                         Co_ku = ((v - 2.0) * (m**2 * (-v*z + v*zq + 2.0*z) + g * (v*zq + v - 2.0))) / (z + 1.0) &
                                 + 0.25 * Mtot**2 * ((v*zq + v - 2.0) * ((v - 2.0)*z - v*zq) + 4.0)
 
-                        !Numerador = Co_ku + 2*f1_ku
-                        Numerador = 1.d0
+                        Numerador = Co_ku + 2*f1_ku
+                        !Numerador = 1.d0
             
                         zmatrix (index1, index2) = zmatrix (index1, index2)+ (1+z)**2 /&
                          (32*PI**2*(g + z**2*m**2 + (1 - z**2) * kappa**2)) * (v**2 / (D**2)) * &
@@ -237,8 +234,8 @@
                         Co_kd = ((v - 2.0) * (m**2 * (-v*z + v*zq + 2.0*z) + g * (v * (zq - 1.0) + 2.0))) / (z - 1.0) &
                                   + 0.25 * Mtot**2 * ((v * (zq - 1.0) + 2.0) * ((v - 2.0) * z - v * zq) + 4.0)
 
-                         !Numerador = Co_kd + 2*f1_kd
-                         Numerador = 1.d0
+                         Numerador = Co_kd + 2*f1_kd
+                         !Numerador = 1.d0
 
                         zmatrix (index1, index2) = zmatrix (index1, index2)+ &
                         (1-z)**2 / (32*PI**2*(g + z**2*m**2 + (1 - z**2) * kappa**2)) * (v**2 / (D**2)) * &
@@ -331,7 +328,7 @@
         END DO
       
         WRITE(10, '(A,I0,A,I0,A,I0,A)') "autovalores_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
-        WRITE(12, '(A,I0,A,I0,A,I0,A)') "Numericamente.autovalores_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
+        WRITE(12, '(A,I0,A,I0,A,I0,A)') "Numericamente_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
           
 	do I = 1, NMA
             WRITE(10,'(I4,2X,F20.12,2X,F20.12)') i, wr(i), wi(i)
