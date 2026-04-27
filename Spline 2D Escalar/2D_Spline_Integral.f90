@@ -15,21 +15,24 @@
        , W(1000),DW(1000), Nz, Ng, Nv, det (1000)
       INTEGER :: ii, jj, i, j, k, l & 
        ,index1, index2, p, q, r, NPARAM, N_intervalZ, NCOL, N_intervalG
-      INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT
+      INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT, k_max, k_min
       DOUBLE PRECISION :: LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
             , IntegralV, num2, max_gamma_visualizacao
 
       INTEGER :: Nnz (100), Nng (100), Nnv (100) 
 
+      DOUBLE PRECISION, EXTERNAL :: f_map, Jacobian_map, inverse_map
+
 
         open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
-        open (unit = 11, file = "autovetores.dat",STATUS="UNKNOWN")
+        open (unit = 11, file = "autovetoresG.dat",STATUS="UNKNOWN")
+        open (unit = 15, file = "autovetoresZ.dat",STATUS="UNKNOWN")
         open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
         open (unit = 13, file = "plotalfa.dat",STATUS="UNKNOWN")
         open (unit = 14, file = 'erros.dat', status='unknown')
         open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
 
-        e = 0.000001d0
+        e = 0.0001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
       !Leitura Inputs
@@ -41,9 +44,9 @@
         
      !Parâmetros
           !Massas
-          Mtot = 1.99d0
+          Mtot = 1.0d0
           m = 1.0d0
-          mu = 0.15d0
+          mu = 0.50d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
@@ -104,21 +107,8 @@
           
          
       !Contrução das malhas
-            
-         !Malha do z
-          !CALL legauss(-1.d0,0.97d0,Nmz/2,zv,dzv,1.d-15)
-        	!CALL legauss(0.97d0,1.d0,Nmz/2,X,dX,1.d-15)
-
-            !CALL legauss(-1.d0,1d0,Nmz,zv,dzv,1.d-15)
-            
-        !do i=nmz/2+1,nmz
-           !zv(i)=x(i-nmz/2)
-        !end do
-    
-        !zv(1)=-0.999999999d0
-        !zv(nmz)=0.99999999d0
         
-        call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
+        call G1D(IW,-1.d0, N_intervalZ, 1.d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)  
         
         do i = 1, 2*N_intervalZ
@@ -128,15 +118,9 @@
         zv(1)=-0.999999d0
         zv(nmz)= 0.999999d0
 
-        !Malha da Gamma
-        !CALL legauss(0.d0,3.d0,Nmg,Y,dY,1.d-15)
-           
-        !call setgaulag(0.d0,Nmg,gv,dY)
 
-        
-        !do i=1,nmg
-          !gv(i)=2.d0/gam0*gv(i)
-        !end do
+        !call G1D(IW,0.d0, N_intervalG, 0.999d0, 1.d0, Y)
+        !call COLLOC(IW,2,N_intervalG,Y,YG)  
 
         call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
         call COLLOC(IW,2,N_intervalG,Y,YG)  
@@ -145,11 +129,13 @@
            gv(i+1)=YG(i)
         enddo
 
-        gv(1) = 0.d0
+        gv(1) = 0.0000001d0
         gv(nmg) = 3.d0
-    
-        !print*, gv
-        !print*, zv
+
+        !gv(1)   =  1.d-3
+        !gv(NMG) = 1.d0 - 1.d-3
+
+       
     !Preparação das Splines
 
         call SPLGR1 (zv,Nmz)
@@ -160,20 +146,9 @@
 
         !Pesos e absissas de Gauss-Legendre para cada variável
 	      CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
-        !CALL legauss(0.d0,gv(nmg),Ng,Y,dY,1.d-15)
+
         CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
-        !call setgaulag(0.d0,Ng,Y,dY)
-
-        !CALL legauss(-1.d0,1.d0,Ng,Y,dY,1.d-15)
-        !print*, Y(Ng)
-        !print*, gv(nmg)
-
-        !gam0 = 12.0d0
-        !do i=1,Ng
-          !Y(i)=2.d0/gam0*Y(i)
-          !dY(i)=2.d0/gam0*dY(i)
-        !end do
-        !print*, Y
+        !CALL legauss(0.d0,1.d0,Ng,Y,dY,1.d-15)
                 
         teste = -huge(1.d0)
         zmatrix  = 0.d0
@@ -181,6 +156,10 @@
         !Loop para cada elemento da Matriz
         do i=1,Nmg
               g=gv(i)
+              !ti = gv(i)
+              !g  = f_map(ti)         ! γ físico do ponto de colocação
+              !g=gv(i)
+
               print*, i
            do j=1,Nmz
               z=zv(j)
@@ -188,6 +167,13 @@
               !call SPLMD1(zv, Nmz, z, splz_at)
               !print*, j
               do k=1,Nmg
+
+           ! k_min = MAX(1, k-1)
+           ! k_max = MIN(Nmg, k+1)
+           ! DSK = (gv(k_max) + gv(k_min)) * 0.5d0
+           ! DDK = (gv(k_max) - gv(k_min)) * 0.5d0
+
+
                 do l=1, Nmz
                     index2 = (l-1)*Nmg + k    !Juntei cada Iteração das Splines Sg e Sz da integração em um vetor coluna de dimenção Nmg*Nmz
                     !print*, index2
@@ -197,12 +183,16 @@
     !Lado Direito
               
         ! gamma variando de 0 a infinito
-                    gp = Y(p)
-                    dgp = dY(p)
+                   ! tp = DDK * Y(p) + DSK
+                    !tp  = Y(p)
+                    !wtp = dY(p)
 
-                    !gp = 3*(1.d0+Y(p))/(1.d0-Y(p))
-                    !dgp = 3*(2.d0/((1.d0-Y(p))**2))*dY(p)
-                    
+                    !gp = f_map(tp)
+                   ! dgp = DDK*Jacobian_map(tp)*wtp
+                    !dgp = Jacobian_map(tp)*wtp
+
+                  gp = Y(p)
+                  dgp = dY(p)
                     
                     !write(14,*) gp
                     
@@ -444,7 +434,7 @@
       !Contrução dos termos cij para dps fazer o sum cij * Spline
       do j=1,Nmz
         do i = 1, Nmg
-          c(i,j) = dabs(vr(i + (j-1)*Nmg, 1))
+          c(i,j) = (vr(i + (j-1)*Nmg, 1))
         enddo
       enddo
       
@@ -473,20 +463,20 @@
       !end do
 
 
-      !Escolhendo Nplot pontos
-      z_fixo = 0.5d0
-      max_gamma_visualizacao = 10.d0
-      N_PLOT = 300
-      call SPLMD1(zv, Nmz, z_fixo, splz) ! Avalia os pesos das splines em z=0 uma única vez
-
-
+!Plot de função x gamma para z fixo
+      z_fixo = 0.8d0
+      max_gamma_visualizacao = 3.d0
+      N_PLOT = 1000
+      call SPLMD1(zv, Nmz, z_fixo, splz)
 
           do p = 0, N_PLOT
-              ! Cria uma distribuição de pontos (aqui linear, mas pode ser logarítmica)
+              ! Cria uma distribuição de pontos
               gamma_plot = (dble(p) / dble(N_PLOT)) * max_gamma_visualizacao
+              !t_plot = inverse_map(gamma_plot)
               
               ! Avalia as bases de Spline no ponto gamma_plot atual
               call SPLMD2(gv, Nmg, gamma_plot, splg)
+              !call SPLMD2(gv, Nmg, t_plot, splg)
 
               soma = 0.d0
               do j = 1, Nmz  
@@ -502,8 +492,39 @@
                     ! Imprime normalmente (o descritor ES já deixa um espaço natural para positivos)
                     write(11, '(2ES25.17E3)') gamma_plot, soma
                 end if
-
           end do
+
+      ! Plot da função variando z para gamma fixo
+      gamma_fixo = 1.d0
+      N_PLOT = 1500
+      call SPLMD2(gv, Nmg, gamma_fixo, splg)
+
+      do p = 0, N_PLOT
+          ! Cria uma distribuição linear para z_plot no domínio de -1.0 a 1.0
+          z_plot = -cos( (dble(p) / dble(N_PLOT)) * PI )
+          
+          ! Avalia as bases de Spline no ponto z_plot atual
+          call SPLMD1(zv, Nmz, z_plot, splz)
+
+          soma = 0.d0
+          do j = 1, Nmz  
+              do i = 1, Nmg
+                  ! splg(i) é constante nesta etapa, splz(j) está variando
+                  soma = soma + c(i,j) * splg(i) * splz(j)
+              end do
+          end do
+          
+          if (soma < 0.0d0) then
+              ! Adiciona um espaço fixo ' ' antes de imprimir os números
+              write(15, '(ES25.17E3, 1X, ES25.17E3)') z_plot, soma
+          else
+              ! Imprime normalmente
+              write(15, '(2ES25.17E3)') z_plot, soma
+          end if
+      end do
+
+
+
 
       DEALLOCATE(XMATRIX, ZMATRIX, WORK, VR, VL, WR, WI, splz)
       DEALLOCATE(splg, ALPHAR, ALPHAI, BETA, c, XG, YG, gv, zv)
@@ -512,7 +533,7 @@
 
       end do
 
-      
+      close (15)      
       CLOSE(10)
       CLOSE(12)
       close(13)
@@ -526,6 +547,33 @@
     END
     
     
+
+
+    !Mapeamento
+
+DOUBLE PRECISION FUNCTION inverse_map(gamma)
+    DOUBLE PRECISION :: gamma
+    
+    ! O inverso exato da função f_map = 0.5d0*dlog((1.d0+t)/(1.d0-t))
+    inverse_map = dtanh(gamma)
+    
+END FUNCTION
+
+DOUBLE PRECISION FUNCTION f_map(t)
+    DOUBLE PRECISION :: t, gam0
+    gam0 = 10.0d0
+    ! Mapeamento atual do seu código
+   ! f_map = gam0 * (1.d0+t) / (1.d0 - t + 1.d-12)
+    f_map=0.5d0*dlog((1.d0+t)/(1.d0-t))
+END FUNCTION
+
+DOUBLE PRECISION FUNCTION Jacobian_map(t)
+    DOUBLE PRECISION :: t, gam0
+    gam0 = 10.0d0
+    ! Derivada dq/dt do mapeamento escolhido
+    !Jacobian_map = 2* gam0 / ((1.d0 - t + 1.d-12)**2)
+    Jacobian_map= 1/(1.d0-t*t)   
+END FUNCTION
     
     !Rotinas
         !Spline 1
