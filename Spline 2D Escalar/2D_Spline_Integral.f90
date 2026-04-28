@@ -27,6 +27,7 @@
         open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
         open (unit = 11, file = "autovetoresG.dat",STATUS="UNKNOWN")
         open (unit = 15, file = "autovetoresZ.dat",STATUS="UNKNOWN")
+        open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
         open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
         open (unit = 13, file = "plotalfa.dat",STATUS="UNKNOWN")
         open (unit = 14, file = 'erros.dat', status='unknown')
@@ -145,7 +146,7 @@
     !Montagem da Matriz
 
         !Pesos e absissas de Gauss-Legendre para cada variável
-	      CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
+	    CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
 
         CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
         !CALL legauss(0.d0,1.d0,Ng,Y,dY,1.d-15)
@@ -440,28 +441,9 @@
       
       !Printar Matriz
       DO I = 1, NMG
-         WRITE(10, '(9999ES16.8)') (c(I,J), J=1, NMZ)
+         WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
       END DO
      
-      !Recontruir g(gamma, z), com z fixo em 0 e gamma variando nos NMG pontos escolhidos
-      !do  p = 1, nmg
-        !gp = gv(p)
-        !zq = 0.d0
-
-          !call SPLMD1 (zv,Nmz,zq,SPLz) 
-          !call SPLMD2 (gv,Nmg,gp,SPLg)
-
-        !soma = 0.d0
-        !do j=1, Nmz  
-          !do i = 1, Nmg
-        
-          !soma = soma + c(i,j)*splz(j)*splg(i)
-          
-          !end do
-        !end do
-          !write(11,'(2ES25.17E3)') gp, soma
-      !end do
-
 
 !Plot de função x gamma para z fixo
       z_fixo = 0.8d0
@@ -522,6 +504,147 @@
               write(15, '(2ES25.17E3)') z_plot, soma
           end if
       end do
+
+      ! -------------------------------------------------------------
+      ! PLOT DA FUNÇÃO PSI NORMALIZADA: Psi(gamma, 0.2) / Psi(0, 0.5)
+      ! -------------------------------------------------------------
+      open(unit = 16, file = "plot_psi.dat", STATUS="UNKNOWN")
+
+      ! 1. CÁLCULO DA NORMALIZAÇÃO (Denominador): Psi(0.0, 0.5)
+      gamma_den = 0.0d0
+      z_den     = 0.5d0
+      psi_den   = 0.d0
+      
+      !Xi = (1-z)/2
+      z_den = 1 - 2*z_den
+      ! Avalia a spline em z_den (Fixo fora do loop da integral)
+      call SPLMD1(zv, Nmz, z_den, splz)
+      CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
+      ! Integrando em gama' usando os pontos de Gauss Y(p) em [-1, 1]
+      do p = 1, Ng
+          tp = Y(p)         
+          wtp = dY(p)       
+          
+          gammap = tp
+          dgp = wtp
+          
+          ! Avalia a spline em gama' (auxiliar tp)
+          call SPLMD2(gv, Nmg, tp, splg)
+          
+          ! Constrói g(gammap, z_den)
+          g_val = 0.d0
+          do j = 1, Nmz
+              do i = 1, Nmg
+                  g_val = g_val + c(i,j) * splg(i) * splz(j)
+              end do
+          end do
+          
+          ! Denominador do propagador: [gamma + gamma' + m^2*z^2 + (1-z^2)*kappa^2]
+          D_den = gamma_den + gammap + (m**2)*(z_den**2) + (1.d0 - z_den**2)*(kappa**2)
+          
+          ! Acumula a integral de dgamma' * g / [Propagador]^2
+          psi_den = psi_den + (g_val * dgp) / (D_den**2)
+      end do
+
+
+      ! 2. CÁLCULO DO NUMERADOR E PLOT: Psi(gamma_plot, 0.2)
+      z_num = 0.2d0
+      max_gamma_visualizacao = 3.d0
+      N_PLOT = 1000
+      
+      z_num = 1 - 2*z_num
+      ! Avalia a spline no novo z_num (Fixo para todo o plot)
+      call SPLMD1(zv, Nmz, z_num, splz)
+      
+      do k_plot = 0, N_PLOT
+          gamma_plot = (dble(k_plot) / dble(N_PLOT)) * max_gamma_visualizacao
+          psi_num = 0.d0
+          
+          ! Integrando em gama' para o gamma_plot atual
+          do p = 1, Ng
+              tp = Y(p)
+              wtp = dY(p)
+              
+              gammap = tp
+              dgp = tp * wtp
+              
+              call SPLMD2(gv, Nmg, tp, splg)
+              
+              g_val = 0.d0
+              do j = 1, Nmz
+                  do i = 1, Nmg
+                      g_val = g_val + c(i,j) * splg(i) * splz(j)
+                  end do
+              end do
+              
+              D_num = gamma_plot + gammap + (m**2)*(z_num**2) + (1.d0 - z_num**2)*(kappa**2)
+              
+              psi_num = psi_num + (g_val * dgp) / (D_num**2)
+          end do
+          
+          ! Faz a normalização final cancelando as constantes
+          psi_norm = psi_num / psi_den
+          
+          ! Salva no arquivo (gamma_plot no Eixo X, psi_norm no Eixo Y)
+          write(16, '(2ES25.17E3)') gamma_plot, psi_norm
+      end do
+      
+      close(16)
+
+      ! -------------------------------------------------------------
+      ! PLOT DA FUNÇÃO PSI NORMALIZADA: Psi(0.54, z) / Psi(0, 0.5)
+      ! -------------------------------------------------------------
+      open(unit = 17, file = "plot_psi_z.dat", STATUS="UNKNOWN")
+
+      ! Numerador tem gamma fixo em 0.54
+      gamma_num = 0.54d0
+      N_PLOT = 1500
+      
+      do k_plot = 0, N_PLOT
+          ! Variando z_plot entre -1 e 1
+          ! Usando a distribuição cosseno (que aglomera pontos nas bordas, 
+          ! ideal para capturar bem o comportamento das splines)
+          z_plot = -cos( (dble(k_plot) / dble(N_PLOT)) * PI )
+          
+          psi_num = 0.d0
+          
+          ! Avalia a spline no z_plot atual (que muda a cada passo do loop)
+          call SPLMD1(zv, Nmz, z_plot, splz)
+          
+          ! Integrando em gama' usando os pontos de Gauss Y(p) em [0, inf]
+          do p = 1, Ng
+              tp = Y(p)
+              wtp = dY(p)
+              
+              gammap = tp
+              dgp = wtp
+              
+              ! Avalia a spline em gamma'
+              call SPLMD2(gv, Nmg, tp, splg)
+              
+              ! Constrói g(gammap, z_plot) combinando as splines e os coeficientes
+              g_val = 0.d0
+              do j = 1, Nmz
+                  do i = 1, Nmg
+                      g_val = g_val + c(i,j) * splg(i) * splz(j)
+                  end do
+              end do
+              
+              ! Denominador do propagador usando gamma_num fixo e z_plot variável
+              D_num = gamma_num + gammap + (m**2)*(z_plot**2) + (1.d0 - z_plot**2)*(kappa**2)
+              
+              ! Acumula a integral
+              psi_num = psi_num + (g_val * dgp) / (D_num**2)
+          end do
+          
+          ! Normalização final
+          psi_norm = psi_num / psi_den
+          
+          ! Salva no arquivo (z_plot no Eixo X, psi_norm no Eixo Y)
+          write(17, '(2ES25.17E3)') z_plot, psi_norm
+      end do
+      
+      close(17)
 
 
 
