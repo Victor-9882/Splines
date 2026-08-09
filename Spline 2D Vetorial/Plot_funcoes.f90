@@ -17,7 +17,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
     ,index1, index2, p, q, r, NPARAM, N_intervalZ, NCOL, N_intervalG
     INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT, k_max, k_min
     DOUBLE PRECISION :: LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
-        , IntegralV, num2, max_gamma_visualizacao
+        , IntegralV, num2, max_gamma_visualizacao, m1, m2
 
     INTEGER :: Nnz (100), Nng (100), Nnv (100) 
 
@@ -38,9 +38,11 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
 
         !Parâmetros
         !Massas
-        Mtot = 1.99d0
-        m = 1.0d0
-        mu = 0.15d0
+        Mtot = 3.23d0
+        m1 = 1.0d0
+        m2 = 2.3d0
+        m = (m1+m2)/2
+        mu = 0.50d0
         kappa = sqrt(m**2 - 0.25*Mtot**2)
 
         gam0 = 10.0d0
@@ -161,7 +163,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
           end do
 
       ! Plot da função variando z para gamma fixo
-      gamma_fixo = 0.d0
+      gamma_fixo = 2.d0
       N_PLOT = 1500
       call SPLMD2(gv, Nmg, gamma_fixo, splg)
 
@@ -281,7 +283,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
       open(unit = 17, file = "plot_psi_z.dat", STATUS="UNKNOWN")
 
       ! Numerador tem gamma fixo em gamma0
-      gamma_num = 0.3d0
+      gamma_num = 0.0d0
       N_PLOT = 1500
       
       do k_plot = 0, N_PLOT

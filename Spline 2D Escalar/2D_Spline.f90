@@ -20,12 +20,13 @@
        INTEGER :: Nnz (100), Nng (100), Nnv (100)
 
         open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
-        open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
         open (unit = 11, file = "autovetores.dat",STATUS="UNKNOWN")
+        open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
+        open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
         open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
     
 		    IMAG=DCMPLX(0.D0,1.D0)
-        e = 0.000001d0
+        e = 0.0001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
       READ(20,*) NPARAM
@@ -37,9 +38,9 @@
 
      !Parâmetros
           !Massas
-          Mtot = 1.99d0
+          Mtot = 1.d0
           m = 1.0d0
-          mu = 0.15d0
+          mu = 0.5d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
@@ -87,7 +88,7 @@
         !zv(nmz)=1.d0
 
 
-        call G1D(IW,-1.d0, N_intervalZ, 1.2d0, 1.d0, X)
+        call G1D(IW,-1.d0, N_intervalZ, 1.d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)
         
         do i = 1, 2*N_intervalZ
@@ -327,42 +328,9 @@
       
       !Printar Matriz
       DO I = 1, NMG
-         WRITE(10, '(9999ES16.8)') (c(I,J), J=1, NMZ)
+         WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
       END DO
-     
-      !Escolhendo Nplot pontos
-      z_fixo = 0.5d0
-      max_gamma_visualizacao = 10.d0
-      N_PLOT = 300
-      call SPLMD1(zv, Nmz, z_fixo, splz) ! Avalia os pesos das splines em z=0 uma única vez
-
-
-
-          do p = 0, N_PLOT
-              ! Cria uma distribuição de pontos (aqui linear, mas pode ser logarítmica)
-              gamma_plot = (dble(p) / dble(N_PLOT)) * max_gamma_visualizacao
-              
-              ! Avalia as bases de Spline no ponto gamma_plot atual
-              call SPLMD2(gv, Nmg, gamma_plot, splg)
-
-              soma = 0.d0
-              do j = 1, Nmz  
-                  ! Como z_fixo é constante, splz(j) já foi calculado fora do loop de p
-                  do i = 1, Nmg
-                      soma = soma + c(i,j) * splg(i) * splz(j)
-                  end do
-              end do
-              if (soma < 0.0d0) then
-                    ! Adiciona um espaço fixo ' ' antes de imprimir os números
-                    write(11, '(ES25.17E3, 1X, ES25.17E3)') gamma_plot, soma
-                else
-                    ! Imprime normalmente (o descritor ES já deixa um espaço natural para positivos)
-                    write(11, '(2ES25.17E3)') gamma_plot, soma
-                end if
-
-          end do
-
-
+    
 
 
       end do
@@ -375,7 +343,7 @@
 20     FORMAT(A70)
 
        
-
+      close (16)
        Close(2)
     END
     

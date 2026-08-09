@@ -18,15 +18,20 @@
             , IntegralV, num2, max_gamma_visualizacao, Numerador, m1, m2
        CHARACTER(LEN=200) :: filename
        INTEGER :: Nnz (100), Nng (100), Nnv (100)
+       !Ponto do dominio escolhido para o diagnostico em termos.dat
+       INTEGER :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
+       LOGICAL :: printou_termos
 
         open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
         open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
         open (unit = 11, file = "autovetores.dat",STATUS="UNKNOWN")
         open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
         open (unit = 14, file = 'erros.dat', status='unknown')
+        open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
+        open (unit = 18, file = "termos.dat", STATUS="UNKNOWN")
     
 		    IMAG=DCMPLX(0.D0,1.D0)
-        e = 0.000001d0
+        e = 0.0001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
       READ(20,*) NPARAM
@@ -37,11 +42,11 @@
         
      !Parâmetros
           !Massas
-          Mtot = 1.99d0
-          m1 = 1.2d0
-          m2 = 1.0d0
+          Mtot = 2.2d0
+          m1 = 1.0d0
+          m2 = 2.3d0
           m = (m1 + m2)/2
-          mu = 0.15d0
+          mu = 0.50d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
@@ -65,6 +70,16 @@
             N_intervalZ = (NMZ-1)/2
             N_intervalG = (NMG-1)/2
             NCOL = 2
+
+        !Ponto do dominio (z, z', gamma, gamma', v) onde os termos serao impressos
+            i_dbg = 8        !indice de gamma   (gv)
+            j_dbg = 5        !indice de z       (zv)
+            k_dbg = 4        !indice da spline em gamma
+            l_dbg = 7       !indice da spline em z
+            p_dbg = 9        !indice de Gauss em gamma'
+            q_dbg = 7      !indice de Gauss em z'
+            r_dbg = 8     !indice de Gauss em v
+
         do ii = 1, NPARAM
             print*, ii
       
@@ -72,7 +87,37 @@
           Nz = Nnz(ii)
           Ng = Nng (ii)
           Nv = Nnv (ii)
-          
+
+          printou_termos = .FALSE.
+
+      !------------------ Cabecalho de termos.dat: parametros ------------------
+          WRITE(18,*) "========================================================"
+          WRITE(18,'(A,I0)') " CONJUNTO DE PARAMETROS ii = ", ii
+          WRITE(18,*) " Splines Vetorial - Massas Diferentes"
+          WRITE(18,*) "========================================================"
+          WRITE(18,*) "--- Massas e parametros fisicos ---"
+          WRITE(18,'(A,F20.10)') " Mtot  = ", Mtot
+          WRITE(18,'(A,F20.10)') " m1    = ", m1
+          WRITE(18,'(A,F20.10)') " m2    = ", m2
+          WRITE(18,'(A,F20.10)') " m     = ", m
+          WRITE(18,'(A,F20.10)') " mu    = ", mu
+          WRITE(18,'(A,F20.10)') " kappa = ", kappa
+          WRITE(18,'(A,F20.10)') " gam0  = ", gam0
+          WRITE(18,'(A,F20.10)') " e     = ", e
+          WRITE(18,'(A,F20.10)') " PI    = ", PI
+          WRITE(18,*) "--- Numero de splines (malhas) ---"
+          WRITE(18,'(A,I0)') " NMZ (splines em z)     = ", NMZ
+          WRITE(18,'(A,I0)') " NMG (splines em gamma) = ", NMG
+          WRITE(18,'(A,I0)') " NMA = NMG*NMZ          = ", NMA
+          WRITE(18,'(A,I0)') " N_intervalZ            = ", N_intervalZ
+          WRITE(18,'(A,I0)') " N_intervalG            = ", N_intervalG
+          WRITE(18,'(A,I0)') " NCOL (colocacao)       = ", NCOL
+          WRITE(18,*) "--- Pontos de Gauss (integracao) ---"
+          WRITE(18,'(A,I0)') " Nz (Gauss em z')       = ", Nz
+          WRITE(18,'(A,I0)') " Ng (Gauss em gamma')   = ", Ng
+          WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
+          WRITE(18,*) "--------------------------------------------------------"
+
         
       !Contrução das malhas
             
@@ -90,15 +135,15 @@
         !zv(nmz)=1.d0
 
 
-        call G1D(IW,-1.d0, N_intervalZ, 1.2d0, 1.d0, X)
+        call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)  
         
         do i = 1, 2*N_intervalZ
           zv(i+1) = XG(i)
         end do
 
-        zv(1)=-0.999999999d0
-        zv(nmz)=0.99999999d0
+        zv(1)=-0.999999d0
+        zv(nmz)= 0.999999d0
         
         !Malha da Gamma
         !CALL legauss(0.d0,3.d0,Nmg,gv,dY,1.d-15)
@@ -111,7 +156,7 @@
            gv(i+1)=YG(i)
         enddo
 
-        gv(1) = 0.d0
+        gv(1) = 0.0000001d0
         gv(nmg) = 3.d0
 
 
@@ -221,11 +266,47 @@
 
                         Numerador = Co_ku + 2*f1_ku
                         !Numerador = 1.d0
-                          
-            
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ (1+z)**2 /&
+
+
+                        contrib_u = (1+z)**2 /&
                          (32*PI**2*D0) * (v**2 / (Du**2)) * &
-                         Numerador * splg(k)*splz(l)*dzq*dgp*dv  
+                         Numerador * splg(k)*splz(l)*dzq*dgp*dv
+
+                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_u
+
+      !------- Impressao dos termos para o ponto escolhido do dominio -------
+                    IF (.NOT. printou_termos .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
+                        .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
+                        .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
+
+                      WRITE(18,*) ""
+                      WRITE(18,*) "=== PONTO DO DOMINIO (indices) ==="
+                      WRITE(18,'(A,7(I5))') " i, j, k, l, p, q, r = ", i, j, k, l, p, q, r
+                      WRITE(18,'(A,I6,A,I6)') " index1 = ", index1, "   index2 = ", index2
+                      WRITE(18,*) ""
+                      WRITE(18,*) "=== VARIAVEIS DO PONTO ==="
+                      WRITE(18,'(A,ES24.15)') " z       = ", z
+                      WRITE(18,'(A,ES24.15)') " g       = ", g
+                      WRITE(18,'(A,ES24.15)') " gp      = ", gp
+                      WRITE(18,'(A,ES24.15)') " dgp     = ", dgp
+                      WRITE(18,'(A,ES24.15)') " v       = ", v
+                      WRITE(18,'(A,ES24.15)') " dv      = ", dv
+                      WRITE(18,*) ""
+                      WRITE(18,*) "=== RAMO SUPERIOR: z' de z ate 1 ==="
+                      WRITE(18,'(A,ES24.15)') " zq      = ", zq
+                      WRITE(18,'(A,ES24.15)') " dzq     = ", dzq
+                      WRITE(18,'(A,ES24.15)') " D0      = ", D0
+                      WRITE(18,'(A,ES24.15)') " Du      = ", Du
+                      WRITE(18,'(A,ES24.15)') " f1_ku   = ", f1_ku
+                      WRITE(18,'(A,ES24.15)') " Co_ku   = ", Co_ku
+                      WRITE(18,'(A,ES24.15)') " Numerador (Co_ku + 2*f1_ku) = ", Co_ku + 2*f1_ku
+                      WRITE(18,'(A,ES24.15)') " splg(k) = ", splg(k)
+                      WRITE(18,'(A,ES24.15)') " splz(l) = ", splz(l)
+                      WRITE(18,'(A,ES24.15)') " (1+z)**2                = ", (1+z)**2
+                      WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
+                      WRITE(18,'(A,ES24.15)') " v**2/Du**2              = ", v**2/(Du**2)
+                      WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_u
+                    END IF
 
                          !TesteLog =  zmatrix (index1, index2)
                           !if (isnan(TesteLog)) then
@@ -267,18 +348,60 @@
                          Numerador = Co_kd + 2*f1_kd
                          !Numerador = 1.d0
 
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ &
-                        (1-z)**2 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
+                        contrib_d = (1-z)**2 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
                         Numerador * splg(k)*splz(l)*dzq*dgp*dv
-                    
+
+                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_d
+
+      !------- Impressao dos termos para o ponto escolhido do dominio -------
+                    IF (.NOT. printou_termos .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
+                        .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
+                        .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
+
+                      WRITE(18,*) ""
+                      WRITE(18,*) "=== RAMO INFERIOR: z' de -1 ate z ==="
+                      WRITE(18,'(A,ES24.15)') " zq      = ", zq
+                      WRITE(18,'(A,ES24.15)') " dzq     = ", dzq
+                      WRITE(18,'(A,ES24.15)') " D0      = ", D0
+                      WRITE(18,'(A,ES24.15)') " Dd      = ", Dd
+                      WRITE(18,'(A,ES24.15)') " f1_kd   = ", f1_kd
+                      WRITE(18,'(A,ES24.15)') " Co_kd   = ", Co_kd
+                      WRITE(18,'(A,ES24.15)') " Numerador (Co_kd + 2*f1_kd) = ", Co_kd + 2*f1_kd
+                      WRITE(18,'(A,ES24.15)') " splg(k) = ", splg(k)
+                      WRITE(18,'(A,ES24.15)') " splz(l) = ", splz(l)
+                      WRITE(18,'(A,ES24.15)') " (1-z)**2                = ", (1-z)**2
+                      WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
+                      WRITE(18,'(A,ES24.15)') " v**2/Dd**2              = ", v**2/(Dd**2)
+                      WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_d
+                      WRITE(18,*) ""
+                      WRITE(18,'(A,ES24.15)') " zmatrix(index1,index2) acumulada = ", &
+                                               zmatrix(index1,index2)
+
+                      printou_termos = .TRUE.
+                    END IF
+
 
                              end do
                         end do
         !Lado Esquerdo
-                        call SPLMD1 (zv,Nmz,z,SPLz) 
+                        call SPLMD1 (zv,Nmz,z,SPLz)
                         xmatrix (index1, index2) = xmatrix (index1, index2) + &
                         1.0d0 / ((g +gp + ((1-z**2)*kappa**2) + m**2*z**2)**2)*splg(k)*splz(l)*dgp
-                        end do 
+
+      !------- Lado esquerdo no ponto escolhido do dominio -------
+                    IF (i.EQ.i_dbg .AND. j.EQ.j_dbg .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg) THEN
+                      WRITE(18,*) ""
+                      WRITE(18,*) "=== LADO ESQUERDO (xmatrix) ==="
+                      WRITE(18,'(A,ES24.15)') " gp (ultimo p = Ng)      = ", gp
+                      WRITE(18,'(A,ES24.15)') " dgp                     = ", dgp
+                      WRITE(18,'(A,ES24.15)') " denominador             = ", &
+                          (g + gp + ((1-z**2)*kappa**2) + m**2*z**2)**2
+                      WRITE(18,'(A,ES24.15)') " splg(k)                 = ", splg(k)
+                      WRITE(18,'(A,ES24.15)') " splz(l) (em z)          = ", splz(l)
+                      WRITE(18,'(A,ES24.15)') " xmatrix(index1,index2)  = ", xmatrix(index1,index2)
+                      WRITE(18,*) "--------------------------------------------------------"
+                    END IF
+                        end do
                         
                enddo
            enddo
@@ -382,47 +505,17 @@
       
       !Printar Matriz
       DO I = 1, NMG
-         WRITE(10, '(9999ES16.8)') (c(I,J), J=1, NMZ)
+         WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
       END DO
      
-      !Escolhendo Nplot pontos
-      z_fixo = 0.5d0
-      max_gamma_visualizacao = 10.d0
-      N_PLOT = 300
-      call SPLMD1(zv, Nmz, z_fixo, splz) ! Avalia os pesos das splines em z=0 uma única vez
-
-
-
-          do p = 0, N_PLOT
-              ! Cria uma distribuição de pontos (aqui linear, mas pode ser logarítmica)
-              gamma_plot = (dble(p) / dble(N_PLOT)) * max_gamma_visualizacao
-              
-              ! Avalia as bases de Spline no ponto gamma_plot atual
-              call SPLMD2(gv, Nmg, gamma_plot, splg)
-
-              soma = 0.d0
-              do j = 1, Nmz  
-                  ! Como z_fixo é constante, splz(j) já foi calculado fora do loop de p
-                  do i = 1, Nmg
-                      soma = soma + c(i,j) * splg(i) * splz(j)
-                  end do
-              end do
-              if (soma < 0.0d0) then
-                    ! Adiciona um espaço fixo ' ' antes de imprimir os números
-                    write(11, '(ES25.17E3, 1X, ES25.17E3)') gamma_plot, soma
-                else
-                    ! Imprime normalmente (o descritor ES já deixa um espaço natural para positivos)
-                    write(11, '(2ES25.17E3)') gamma_plot, soma
-                end if
-
-          end do
 
 
 
 
       end do
 
-      
+      CLOSE(16)
+      CLOSE(18)
       CLOSE(10)
       CLOSE(12)
       CLOSE(14)
