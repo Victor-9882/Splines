@@ -1,5 +1,5 @@
  IMPLICIT DOUBLE PRECISION(a-h,o-z)
-      PARAMETER(NMG=25, NMZ=18, NMA = NMG*NMZ,LWORK=10*NMA)   
+      PARAMETER(NMG=10, NMZ=10, NMA = NMG*NMZ,LWORK=10*NMA)   
 	  COMPLEX*16 IMAG     
       	DIMENSION XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA),AUNIT(NMA,NMA) &
          ,VR(NMA,NMA),VL(NMA,2*NMA), BETAA(NMA),VAUX(NMA),WR(NMA)&
@@ -42,11 +42,11 @@
         
      !Parâmetros
           !Massas
-          Mtot = 1.99d0
+          Mtot = 2.3d0
           m1 = 1.0d0
-          m2 = 1.0d0
+          m2 = 2.3d0
           m = (m1 + m2)/2
-          mu = 0.15d0
+          mu = 1.8d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
@@ -259,8 +259,8 @@
                         Co_ku = 0.25d0*(z + 1.d0)*(Mtot**2*(z + 1.d0)*((v*zq + v - 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
                                  + 4.d0*(v - 2.d0)*(m2**2*(-v*z + v*zq + 2.d0*z) + g*(v*zq + v - 2.d0)))
 
-                       ! Numerador = Co_ku + 2*f1_ku
-                        Numerador = (1.d0+z)**2
+                       Numerador = Co_ku + 2*f1_ku
+                       ! Numerador = (1.d0+z)**2
 
 
                         contrib_u = 1.d0 /&
@@ -333,8 +333,8 @@
                         Co_kd =0.25d0*(z - 1.d0)*(Mtot**2*(z - 1.d0)*((v*(zq - 1.d0) + 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
                              + 4.d0*(v - 2.d0)*(m1**2*(-v*z + v*zq + 2.d0*z) + g*(v*(zq - 1.d0) + 2.d0)))
 
-                         !Numerador = Co_kd + 2*f1_kd
-                         Numerador = (1.d0-z)**2
+                         Numerador = Co_kd + 2*f1_kd
+                         !Numerador = (1.d0-z)**2
 
                         contrib_d = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
                         Numerador * splg(k)*splz(l)*dzq*dgp*dv

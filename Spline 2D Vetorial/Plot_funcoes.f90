@@ -38,11 +38,11 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
 
         !Parâmetros
         !Massas
-        Mtot = 3.23d0
+        Mtot = 2.3d0
         m1 = 1.0d0
         m2 = 2.3d0
         m = (m1+m2)/2
-        mu = 0.50d0
+        mu = 1.8d0
         kappa = sqrt(m**2 - 0.25*Mtot**2)
 
         gam0 = 10.0d0
@@ -252,7 +252,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
               wtp = dY(p)
               
               gammap = tp
-              dgp = tp * wtp
+              dgp = wtp
               
               call SPLMD2(gv, Nmg, tp, splg)
               
@@ -283,7 +283,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
       open(unit = 17, file = "plot_psi_z.dat", STATUS="UNKNOWN")
 
       ! Numerador tem gamma fixo em gamma0
-      gamma_num = 0.0d0
+      gamma_num = 2.0d0
       N_PLOT = 1500
       
       do k_plot = 0, N_PLOT
@@ -327,7 +327,9 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
           psi_norm = psi_num / psi_den
           
           ! Salva no arquivo (z_plot no Eixo X, psi_norm no Eixo Y)
-          write(17, '(2ES25.17E3)') z_plot, psi_norm
+          ! Espaços fixos (1X) evitam que um sinal negativo cole no número
+          ! anterior, o que impede o xmgrace de ler a coluna corretamente
+          write(17, '(1X, ES25.17E3, 1X, ES25.17E3)') z_plot, psi_norm
       end do
       
       close(17)
