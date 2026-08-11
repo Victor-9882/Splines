@@ -30,7 +30,7 @@
         open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
         open (unit = 18, file = "termos.dat", STATUS="UNKNOWN")
     
-		    IMAG=DCMPLX(0.D0,1.D0)
+        IMAG=DCMPLX(0.D0,1.D0)
         e = 0.0001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
@@ -72,13 +72,13 @@
             NCOL = 2
 
         !Ponto do dominio (z, z', gamma, gamma', v) onde os termos serao impressos
-            i_dbg = 8        !indice de gamma   (gv)
-            j_dbg = 5        !indice de z       (zv)
-            k_dbg = 4        !indice da spline em gamma
-            l_dbg = 7       !indice da spline em z
-            p_dbg = 9        !indice de Gauss em gamma'
-            q_dbg = 7      !indice de Gauss em z'
-            r_dbg = 8     !indice de Gauss em v
+            i_dbg = 10       !indice de gamma   (gv)
+            j_dbg = 10       !indice de z       (zv)
+            k_dbg = 10       !indice da spline em gamma
+            l_dbg = 10      !indice da spline em z
+            p_dbg = 10       !indice de Gauss em gamma'
+            q_dbg = 10     !indice de Gauss em z'
+            r_dbg = 10    !indice de Gauss em v
 
         do ii = 1, NPARAM
             print*, ii
@@ -187,7 +187,7 @@
     !Montagem da Matriz
 
         !Pesos e absissas de Gauss-Legendre para cada variável
-	      CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
+        CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
         CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
         !call setgaulag(0.d0,Ng,Y,dY)
 
@@ -259,7 +259,7 @@
                         Co_ku = 0.25d0*(z + 1.d0)*(Mtot**2*(z + 1.d0)*((v*zq + v - 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
                                  + 4.d0*(v - 2.d0)*(m2**2*(-v*z + v*zq + 2.d0*z) + g*(v*zq + v - 2.d0)))
 
-                       Numerador = Co_ku + 2*f1_ku
+                       Numerador = Co_ku - 2*f1_ku
                        ! Numerador = (1.d0+z)**2
 
 
@@ -333,7 +333,7 @@
                         Co_kd =0.25d0*(z - 1.d0)*(Mtot**2*(z - 1.d0)*((v*(zq - 1.d0) + 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
                              + 4.d0*(v - 2.d0)*(m1**2*(-v*z + v*zq + 2.d0*z) + g*(v*(zq - 1.d0) + 2.d0)))
 
-                         Numerador = Co_kd + 2*f1_kd
+                         Numerador = Co_kd - 2*f1_kd
                          !Numerador = (1.d0-z)**2
 
                         contrib_d = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
