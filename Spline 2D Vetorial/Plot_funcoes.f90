@@ -16,8 +16,11 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
     INTEGER :: ii, jj, i, j, k, l & 
     ,index1, index2, p, q, r, NPARAM, N_intervalZ, NCOL, N_intervalG
     INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT, k_max, k_min
+    INTEGER :: N_PLOT_G, N_PLOT_Z, p_plot
     DOUBLE PRECISION :: LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
         , IntegralV, num2, max_gamma_visualizacao, m1, m2
+    DOUBLE PRECISION :: dist_long, dist_trans, kperp, gamma_ext, dgamma_ext &
+        , z_ext, dz_ext, Norma
 
     INTEGER :: Nnz (100), Nng (100), Nnv (100) 
 
@@ -130,7 +133,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
         end do
 
        !g1_00 = abs(g1_00)
-        g1_00 = 1.d0
+        g1_00 = 0.d0
       !Plot de função x gamma para z fixo
       z_fixo = 0.8d0
       max_gamma_visualizacao = 3.d0
@@ -333,6 +336,250 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
       end do
       
       close(17)
+
+      ! =============================================================
+      ! DISTRIBUICOES DE MOMENTO
+      !
+      ! Psi(gamma,z) = Int_0^inf dgamma' g(gamma',z)
+      !                / [gamma + gamma' + m^2 z^2 + (1-z^2) kappa^2]^2
+      !
+      ! gamma = |k_perp|^2  (momento transversal)
+      ! z                   (momento longitudinal)
+      !
+      ! (a) plot_psi2_3d.dat   : |Psi(gamma,z)|^2 na malha (gamma,z)
+      ! (b) plot_dist_long.dat : P(z)     = Int_{-1}^{1} dz  ... -> em z
+      ! (c) plot_dist_trans.dat: P(k_perp)= Int dz |Psi|^2, com
+      !     Jacobiano 2 k_perp dk_perp = dgamma (pois gamma = k_perp^2)
+      !
+      ! NORMALIZACAO: todas as tres curvas sao divididas pela MESMA
+      ! constante
+      !     Norma = Int_0^{gamma_max} dgamma Int_{-1}^{1} dz |Psi|^2
+      ! Assim a densidade 2D integra 1 e as duas distribuicoes marginais
+      ! (longitudinal e transversal) tambem integram 1 automaticamente,
+      ! pois sao marginais da MESMA densidade normalizada. Usar uma
+      ! constante por curva quebraria essa consistencia mutua.
+      ! =============================================================
+
+      ! Pontos/pesos de Gauss em gamma' para a integral interna do propagador
+      CALL legauss(0.d0, 3.d0, Ng, Y, dY, 1.d-15)
+
+      ! Malha do plot 3D
+      N_PLOT_G = 200
+      N_PLOT_Z = 200
+      max_gamma_visualizacao = 3.d0
+
+      ! ------------------------------------------------------------
+      ! CONSTANTE DE NORMALIZACAO
+      !   Norma = Int dgamma Int dz |Psi(gamma,z)|^2
+      ! Calculada por quadratura de Gauss nas duas variaveis (mais
+      ! precisa que a regra do trapezio sobre a malha do plot).
+      ! ------------------------------------------------------------
+      CALL legauss(0.d0, 3.d0, Nv, W, dW, 1.d-15)                  ! em gamma
+      CALL legauss(-0.999999d0, 0.999999d0, Nz, X, dX, 1.d-15)     ! em z
+
+      Norma = 0.d0
+      do r = 1, Nz
+          z_ext  = X(r)
+          dz_ext = dX(r)
+
+          call SPLMD1(zv, Nmz, z_ext, splz)
+
+          do q = 1, Nv
+              gamma_ext  = W(q)
+              dgamma_ext = dW(q)
+
+              psi_num = 0.d0
+              do p = 1, Ng
+                  gammap = Y(p)
+                  dgp    = dY(p)
+
+                  call SPLMD2(gv, Nmg, gammap, splg)
+
+                  g_val = 0.d0
+                  do j = 1, Nmz
+                      do i = 1, Nmg
+                          g_val = g_val + c(i,j) * splg(i) * splz(j)
+                      end do
+                  end do
+
+                  D_num = gamma_ext + gammap + (m**2)*(z_ext**2) &
+                          + (1.d0 - z_ext**2)*(kappa**2)
+
+                  psi_num = psi_num + (g_val * dgp) / (D_num**2)
+              end do
+
+              psi_norm = psi_num / psi_den
+
+              Norma = Norma + (psi_norm**2) * dgamma_ext * dz_ext
+          end do
+      end do
+
+      WRITE(*,'(A,ES25.17E3)') " Constante de normalizacao (Int Int |Psi|^2) = ", Norma
+
+      ! ------------------------------------------------------------
+      ! (a) PLOT 3D: |Psi(gamma,z)|^2
+      ! ------------------------------------------------------------
+      open(unit = 21, file = "plot_psi2_3d.dat", STATUS="UNKNOWN")
+
+      do k_plot = 0, N_PLOT_Z
+          z_plot = -1.d0 + 2.d0 * dble(k_plot) / dble(N_PLOT_Z)
+          if (z_plot .le. -1.d0) z_plot = -0.999999d0
+          if (z_plot .ge.  1.d0) z_plot =  0.999999d0
+
+          call SPLMD1(zv, Nmz, z_plot, splz)
+
+          do p_plot = 0, N_PLOT_G
+              gamma_plot = (dble(p_plot) / dble(N_PLOT_G)) * max_gamma_visualizacao
+
+              psi_num = 0.d0
+              do p = 1, Ng
+                  gammap = Y(p)
+                  dgp    = dY(p)
+
+                  call SPLMD2(gv, Nmg, gammap, splg)
+
+                  g_val = 0.d0
+                  do j = 1, Nmz
+                      do i = 1, Nmg
+                          g_val = g_val + c(i,j) * splg(i) * splz(j)
+                      end do
+                  end do
+
+                  D_num = gamma_plot + gammap + (m**2)*(z_plot**2) &
+                          + (1.d0 - z_plot**2)*(kappa**2)
+
+                  psi_num = psi_num + (g_val * dgp) / (D_num**2)
+              end do
+
+              psi_norm = psi_num / psi_den
+
+              ! gamma, z, |Psi|^2 normalizado (integra 1 em dgamma dz)
+              ! (linhas em branco separam blocos p/ gnuplot)
+              write(21, '(3(1X,ES25.17E3))') gamma_plot, z_plot, (psi_norm**2)/Norma
+          end do
+          write(21, *) ""
+      end do
+
+      close(21)
+
+      ! ------------------------------------------------------------
+      ! (b) DISTRIBUICAO LONGITUDINAL: integra |Psi|^2 em gamma
+      !     P(z) = Int_0^{gamma_max} dgamma |Psi(gamma,z)|^2 / Norma
+      !     Normalizada: Int_{-1}^{1} P(z) dz = 1
+      ! ------------------------------------------------------------
+      open(unit = 22, file = "plot_dist_long.dat", STATUS="UNKNOWN")
+
+      ! Pontos de Gauss para a integral EXTERNA em gamma (variavel de integracao)
+      CALL legauss(0.d0, 3.d0, Nv, W, dW, 1.d-15)
+
+      N_PLOT = 400
+      do k_plot = 0, N_PLOT
+          z_plot = -1.d0 + 2.d0 * dble(k_plot) / dble(N_PLOT)
+          if (z_plot .le. -1.d0) z_plot = -0.999999d0
+          if (z_plot .ge.  1.d0) z_plot =  0.999999d0
+
+          call SPLMD1(zv, Nmz, z_plot, splz)
+
+          dist_long = 0.d0
+          do q = 1, Nv
+              gamma_ext = W(q)
+              dgamma_ext = dW(q)
+
+              psi_num = 0.d0
+              do p = 1, Ng
+                  gammap = Y(p)
+                  dgp    = dY(p)
+
+                  call SPLMD2(gv, Nmg, gammap, splg)
+
+                  g_val = 0.d0
+                  do j = 1, Nmz
+                      do i = 1, Nmg
+                          g_val = g_val + c(i,j) * splg(i) * splz(j)
+                      end do
+                  end do
+
+                  D_num = gamma_ext + gammap + (m**2)*(z_plot**2) &
+                          + (1.d0 - z_plot**2)*(kappa**2)
+
+                  psi_num = psi_num + (g_val * dgp) / (D_num**2)
+              end do
+
+              psi_norm = psi_num / psi_den
+
+              dist_long = dist_long + (psi_norm**2) * dgamma_ext
+          end do
+
+          write(22, '(2(1X,ES25.17E3))') z_plot, dist_long/Norma
+      end do
+
+      close(22)
+
+      ! ------------------------------------------------------------
+      ! (c) DISTRIBUICAO TRANSVERSAL: integra |Psi|^2 em z de -1 a 1
+      !     P(k_perp) = Int_{-1}^{1} dz |Psi(k_perp^2, z)|^2
+      !
+      !     Jacobiano: gamma = |k_perp|^2  =>  dgamma = 2 k_perp dk_perp,
+      !     de modo que Int 2 k_perp dk_perp F = Int dgamma F.
+      !     A coluna 3 traz  2*k_perp*P(k_perp), a densidade ja com o
+      !     Jacobiano, cuja integral em dk_perp de 0 a sqrt(3) reproduz
+      !     a integral em dgamma de 0 a 3.
+      !
+      !     Normalizada pela mesma constante Norma, de modo que
+      !         Int_0^{sqrt(3)} 2 k_perp P(k_perp) dk_perp = 1
+      !     equivalentemente Int_0^{3} P dgamma = 1.  Note que quem
+      !     integra 1 e a coluna 3 (densidade em dk_perp); a coluna 2
+      !     integra 1 quando integrada em dgamma.
+      ! ------------------------------------------------------------
+      open(unit = 23, file = "plot_dist_trans.dat", STATUS="UNKNOWN")
+
+      ! Pontos de Gauss para a integral EXTERNA em z
+      CALL legauss(-1.d0, 1.d0, Nz, X, dX, 1.d-15)
+
+      N_PLOT = 800
+      do k_plot = 0, N_PLOT
+          ! Varredura uniforme em k_perp ate o truncamento sqrt(gamma_max)
+          kperp = (dble(k_plot) / dble(N_PLOT)) * dsqrt(max_gamma_visualizacao)
+          gamma_plot = kperp**2
+
+          dist_trans = 0.d0
+          do q = 1, Nz
+              z_ext  = X(q)
+              dz_ext = dX(q)
+
+              call SPLMD1(zv, Nmz, z_ext, splz)
+
+              psi_num = 0.d0
+              do p = 1, Ng
+                  gammap = Y(p)
+                  dgp    = dY(p)
+
+                  call SPLMD2(gv, Nmg, gammap, splg)
+
+                  g_val = 0.d0
+                  do j = 1, Nmz
+                      do i = 1, Nmg
+                          g_val = g_val + c(i,j) * splg(i) * splz(j)
+                      end do
+                  end do
+
+                  D_num = gamma_plot + gammap + (m**2)*(z_ext**2) &
+                          + (1.d0 - z_ext**2)*(kappa**2)
+
+                  psi_num = psi_num + (g_val * dgp) / (D_num**2)
+              end do
+
+              psi_norm = psi_num / psi_den
+
+              dist_trans = dist_trans + (psi_norm**2) * dz_ext
+          end do
+
+          ! k_perp, P(k_perp), 2*k_perp*P(k_perp)  (densidade com Jacobiano)
+          ! ambas ja normalizadas por Norma
+          write(23, '(3(1X,ES25.17E3))') kperp, dist_trans/Norma
+      end do
+
+      close(23)
 
 
       DEALLOCATE(XMATRIX, ZMATRIX, WORK, VR, VL, WR, WI, splz)
