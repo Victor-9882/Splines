@@ -3,23 +3,23 @@
       IMPLICIT NONE
 
 !===================== Dimensoes fixas do problema =====================
-      INTEGER, PARAMETER :: NMG   = 20            !Numero de splines em gamma
-      INTEGER, PARAMETER :: NMZ   = 20             !Numero de splines em z
+      INTEGER, PARAMETER :: NMG   = 24           !Numero de splines em gamma
+      INTEGER, PARAMETER :: NMZ   = 24           !Numero de splines em z
       INTEGER, PARAMETER :: NMA   = NMG*NMZ         !Dimensao do problema de autovalores
       INTEGER, PARAMETER :: LWORK = 10*NMA          !Tamanho do buffer de trabalho do LAPACK
 
 !===================== Malhas e bases de splines =======================
-      DOUBLE PRECISION :: zv(NMZ+1), gv(300)        !Nos das malhas em z e em gamma
+      DOUBLE PRECISION :: zv(NMZ+1), gv(300)        !Nos das malhas em z e em gamma (= pontos de colocacao)
       DOUBLE PRECISION :: splz(NMZ), splg(NMG)      !Splines avaliadas no ponto corrente
-      DOUBLE PRECISION :: XG(NMA), YG(NMA)          !Pontos de colocacao gerados por COLLOC
+      INTEGER :: IW                                 !Unidade de saida dos diagnosticos de malha
       INTEGER :: N_intervalZ, N_intervalG           !Numero de intervalos das malhas
       INTEGER :: NCOL                               !Pontos de colocacao por intervalo
-      INTEGER :: IW                                 !Unidade de saida dos diagnosticos de malha
 
 !===================== Matrizes do problema generalizado ===============
       DOUBLE PRECISION, ALLOCATABLE :: XMATRIX(:,:)  !Lado esquerdo (norma)
       DOUBLE PRECISION, ALLOCATABLE :: ZMATRIX(:,:)  !Lado direito (kernel)
       DOUBLE PRECISION, ALLOCATABLE :: c(:,:)        !Coeficientes cij do autovetor fundamental
+      DOUBLE PRECISION :: XG(NMA), YG(NMA)          !Pontos de colocacao gerados por COLLOC
 
 !===================== Saida do DGGEV ==================================
       DOUBLE PRECISION, ALLOCATABLE :: ALPHAR(:), ALPHAI(:) !Numeradores do autovalor generalizado
@@ -67,6 +67,8 @@
       DOUBLE PRECISION :: Du, Dd                    !Denominadores dos ramos z'>z e z'<z
       DOUBLE PRECISION :: f1_ku, Co_ku              !Termos do numerador no ramo superior
       DOUBLE PRECISION :: Co_kd                     !Termo do numerador no ramo inferior
+      LOGICAL :: SING_U, SING_D                     !z=-1 (ramo Du) / z=+1 (ramo Dd): 0/0 removivel
+      DOUBLE PRECISION, PARAMETER :: TOL_SING = 1.D-10 !Tolerancia em torno de z=+-1
       DOUBLE PRECISION :: contrib_escu, contrib_escd  !Contribuicoes escalares de cada ramo
       DOUBLE PRECISION :: contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku
 
@@ -76,12 +78,12 @@
       LOGICAL :: printou_termos
       !Diagnostico desligado em paralelo: o bloco de WRITE(18,...) dentro do
       !laco serializa as threads e escreve concorrentemente na mesma unidade.
-      LOGICAL, PARAMETER :: DEBUG_TERMOS = .TRUE.
+      LOGICAL, PARAMETER :: DEBUG_TERMOS = .FALSE.
 
 !===================== Cronometragem OpenMP ============================
       DOUBLE PRECISION :: TSTART, TEND, TSTART_EIG, TEND_EIG
       INTEGER :: NTHREADS, NTHREADS_MKL
-      INTEGER, EXTERNAL :: MKL_GET_MAX_THREADS
+
 
 !===================== Acompanhamento do progresso =====================
       INTEGER :: NFEITOS                            !Pares (i,j) ja concluidos (COMPARTILHADO)
@@ -180,16 +182,12 @@
           WRITE(18,'(A,I0)') " NMZ (splines em z)     = ", NMZ
           WRITE(18,'(A,I0)') " NMG (splines em gamma) = ", NMG
           WRITE(18,'(A,I0)') " NMA = NMG*NMZ          = ", NMA
-          WRITE(18,'(A,I0)') " N_intervalZ            = ", N_intervalZ
-          WRITE(18,'(A,I0)') " N_intervalG            = ", N_intervalG
-          WRITE(18,'(A,I0)') " NCOL (colocacao)       = ", NCOL
           WRITE(18,*) "--- Pontos de Gauss (integracao) ---"
           WRITE(18,'(A,I0)') " Nz (Gauss em z')       = ", Nz
           WRITE(18,'(A,I0)') " Ng (Gauss em gamma')   = ", Ng
           WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
           WRITE(18,*) "--------------------------------------------------------"
 
-        !--------Construção das malhas-----------------------------
         call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)  
         
@@ -197,9 +195,8 @@
           zv(i+1) = XG(i)
         end do
 
-        zv(1)=-0.999999d0
-        zv(nmz)= 0.999999d0
-                   
+        zv(1)=-1.d0
+        zv(nmz)= 1.d0
 
         call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
         call COLLOC(IW,2,N_intervalG,Y,YG)  
@@ -229,7 +226,7 @@
 
         NTHREADS = 1
 !$      NTHREADS = OMP_GET_MAX_THREADS()
-        NTHREADS_MKL = MKL_GET_MAX_THREADS()
+
         WRITE(*,'(A,I0,A,I0,A)') " Montagem das matrizes com ", NTHREADS, &
                                   " thread(s) OpenMP (MKL_NUM_THREADS=", &
                                   NTHREADS_MKL, ")..."
@@ -261,8 +258,9 @@
 !$OMP   PRIVATE(i, j, k, l, p, q, r, index1, index2, &
 !$OMP           g, z, gp, dgp, v, dv, zq, dzq, &
 !$OMP           SPLz, SPLg, &
-!$OMP           D0, Du, Dd, f1_ku, Co_ku, Co_kd, &
+!$OMP           D0, Du, Dd, f1_ku, Co_ku, Co_kd, SING_U, SING_D, &
 !$OMP           contrib_escu, contrib_escd, &
+!$OMP           contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku, &
 !$OMP           NFEITOS_LOC, TAGORA, TDECOR, TRESTA, PCT) &
 !$OMP   COLLAPSE(2) SCHEDULE(DYNAMIC)
         !Loop para cada elemento da Matriz
@@ -270,6 +268,15 @@
            do j=1,Nmz
               g=gv(i)
               z=zv(j)
+              !Du ~ (z+1) e Dd ~ (z-1): o numerador tem o mesmo fator, entao
+              !a razao e uma singularidade removivel (0/0) em z=-1 e z=+1.
+              !Como agora zv(1)=-1 e zv(nmz)=+1 sao nos exatos da malha, a
+              !divisao literal por Du/Dd nesses pontos e numericamente instavel
+              !(cancelamento catastrofico); a contribuicao correta e finita
+              !mas pulamos o ramo aqui, como faz o codigo frances em
+              !Kernel_droite (if(dabs(u∓1)<1.D-10) return).
+              SING_U = (DABS(z + 1.d0) .LT. TOL_SING)
+              SING_D = (DABS(z - 1.d0) .LT. TOL_SING)
               index1 = (j-1)*Nmg + i           !Juntei cada ponto (gi, zj) num vetor coluna de dimensão Nmg*Nmz
               do k=1,Nmg
                 do l=1, Nmz
@@ -301,6 +308,7 @@
         !Termos do Kernel
                       D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
 
+                      IF (.NOT. SING_U) THEN
                       Du = 0.25d0 * ( &
                             Mtot**2 * (-v) * (z + 1.0d0) * (zq + 1.0d0) * ((v - 1.0d0) * z - v * zq + 1.0d0) &
                             + v * ( m1**2 * (z + 1.0d0) + 2.0d0 * m1 * m2 * (z + 1.0d0) + &
@@ -330,11 +338,12 @@
                         (32*PI**2*D0) * (v**2 / (Du)) * &
                         (z+1)* splg(k)*splz(l)*dzq*dgp*dv
 
-                        zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_ku - contrib_f1_ku
-                        !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
+                        !zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_ku - contrib_f1_ku
+                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
+                      END IF !.NOT. SING_U
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
-                    IF (DEBUG_TERMOS .AND. .NOT. printou_termos &
+                    IF (DEBUG_TERMOS .AND. .NOT. SING_U .AND. .NOT. printou_termos &
                         .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
                         .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
                         .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
@@ -391,9 +400,11 @@
                      zq=(z+1.d0)*x(q)-1.d0
                      call SPLMD1 (zv,Nmz,zq,SPLz)
 
-        !Termos do Kernel      
-                        
+        !Termos do Kernel
+
                         D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
+
+                        IF (.NOT. SING_D) THEN
                         Dd = 0.25d0 * ( &
                             Mtot**2 * v * (z - 1.0d0) * (zq - 1.0d0) * ((v - 1.0d0) * z - v * zq - 1.0d0) &
                             + v * ( m1**2 * (-4.0d0 * v * z + 4.0d0 * (v - 1.0d0) * zq + 3.0d0 * z + 1.0d0) &
@@ -411,7 +422,7 @@
 
                          !Numerador = Co_kd - 2*f1_kd
                          !Numerador = (1.d0-z)**2
-                        
+
                         contrib_escd = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
                         ((1.d0 - z)**2)*splg(k)*splz(l)*dzq*dgp*dv
 
@@ -421,11 +432,12 @@
                         contrib_f1_kd = 2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * &
                         (1.d0-z) * splg(k)*splz(l)*dzq*dgp*dv
 
-                        zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_kd - contrib_f1_kd
-                        !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
+                        !zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_kd - contrib_f1_kd
+                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
+                        END IF !.NOT. SING_D
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
-                    IF (DEBUG_TERMOS .AND. .NOT. printou_termos &
+                    IF (DEBUG_TERMOS .AND. .NOT. SING_D .AND. .NOT. printou_termos &
                         .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
                         .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
                         .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
@@ -534,7 +546,7 @@
             end do
 
                     
-        NTHREADS_MKL = MKL_GET_MAX_THREADS()
+
         WRITE(*,'(A,I0,A)') " DGGEV com ", NTHREADS_MKL, " thread(s) MKL..."
 
         TSTART_EIG = 0.d0
