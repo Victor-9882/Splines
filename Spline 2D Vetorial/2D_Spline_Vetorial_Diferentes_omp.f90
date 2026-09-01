@@ -330,7 +330,7 @@
                         (32*PI**2*D0) * (v**2 / (Du)) * &
                         (z+1)* splg(k)*splz(l)*dzq*dgp*dv
 
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_C0_ku + contrib_f1_ku
+                        zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_ku - contrib_f1_ku
                         !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
@@ -421,7 +421,7 @@
                         contrib_f1_kd = 2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * &
                         (1.d0-z) * splg(k)*splz(l)*dzq*dgp*dv
 
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_C0_kd + contrib_f1_kd
+                        zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_kd - contrib_f1_kd
                         !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
