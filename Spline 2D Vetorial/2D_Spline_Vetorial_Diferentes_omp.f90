@@ -3,8 +3,8 @@
       IMPLICIT NONE
 
 !===================== Dimensoes fixas do problema =====================
-      INTEGER, PARAMETER :: NMG   = 50            !Numero de splines em gamma
-      INTEGER, PARAMETER :: NMZ   = 50             !Numero de splines em z
+      INTEGER, PARAMETER :: NMG   = 20            !Numero de splines em gamma
+      INTEGER, PARAMETER :: NMZ   = 20             !Numero de splines em z
       INTEGER, PARAMETER :: NMA   = NMG*NMZ         !Dimensao do problema de autovalores
       INTEGER, PARAMETER :: LWORK = 10*NMA          !Tamanho do buffer de trabalho do LAPACK
 
@@ -68,6 +68,7 @@
       DOUBLE PRECISION :: f1_ku, Co_ku              !Termos do numerador no ramo superior
       DOUBLE PRECISION :: Co_kd                     !Termo do numerador no ramo inferior
       DOUBLE PRECISION :: contrib_escu, contrib_escd  !Contribuicoes escalares de cada ramo
+      DOUBLE PRECISION :: contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku
 
 !===================== Diagnostico em termos.dat =======================
       !Ponto do dominio escolhido para o diagnostico
@@ -75,7 +76,7 @@
       LOGICAL :: printou_termos
       !Diagnostico desligado em paralelo: o bloco de WRITE(18,...) dentro do
       !laco serializa as threads e escreve concorrentemente na mesma unidade.
-      LOGICAL, PARAMETER :: DEBUG_TERMOS = .FALSE.
+      LOGICAL, PARAMETER :: DEBUG_TERMOS = .TRUE.
 
 !===================== Cronometragem OpenMP ============================
       DOUBLE PRECISION :: TSTART, TEND, TSTART_EIG, TEND_EIG
@@ -307,10 +308,10 @@
                                     4.0d0 * g * (v - 1.0d0) * (zq + 1.0d0) + 4.0d0 * gp * (z + 1.0d0) ) &
                             - 4.0d0 * mu**2 * (v - 1.0d0) * (z + 1.0d0) )
 
-                       f1_ku = 0.25d0*(z + 1.d0)*(Mtot**2*v*(z + 1.d0)*(zq + 1.d0)*((v - 1.d0)*z - v*zq + 1.d0) &
-                                 - v*(m1**2*(z + 1.d0) + 2.d0*m1*m2*(z + 1.d0) + m2**2*(4.d0*v*z - 4.d0*v*zq &
-                                 - 3.d0*z + 4.d0*zq + 1.d0) - 4.d0*g*(v - 1.d0)*(zq + 1.d0) + 4.d0*gp*(z + 1.d0)) &
-                                 + 4.d0*mu**2*(v - 1.d0)*(z + 1.d0))
+                       !f1_ku = 0.25d0*(z + 1.d0)*(Mtot**2*v*(z + 1.d0)*(zq + 1.d0)*((v - 1.d0)*z - v*zq + 1.d0) &
+                                 !- v*(m1**2*(z + 1.d0) + 2.d0*m1*m2*(z + 1.d0) + m2**2*(4.d0*v*z - 4.d0*v*zq &
+                                 !- 3.d0*z + 4.d0*zq + 1.d0) - 4.d0*g*(v - 1.d0)*(zq + 1.d0) + 4.d0*gp*(z + 1.d0)) &
+                                 !+ 4.d0*mu**2*(v - 1.d0)*(z + 1.d0))
 
                         Co_ku = 0.25d0*(z + 1.d0)*(Mtot**2*(z + 1.d0)*((v*zq + v - 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
                                  + 4.d0*(v - 2.d0)*(m2**2*(-v*z + v*zq + 2.d0*z) + g*(v*zq + v - 2.d0)))
@@ -321,16 +322,16 @@
                         contrib_escu = 1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * &
                         ((1.d0 + z)**2)*splg(k)*splz(l)*dzq*dgp*dv
 
-                        !contrib_C0 = 1.d0 /&
-                         !(32*PI**2*D0) * (v**2 / (Du**2)) * &
-                         !Co_ku * splg(k)*splz(l)*dzq*dgp*dv
+                        contrib_C0_ku = 1.d0 /&
+                         (32*PI**2*D0) * (v**2 / (Du**2)) * &
+                         Co_ku * splg(k)*splz(l)*dzq*dgp*dv
 
-                         !contrib_f1 = 2.d0 /&
-                         !(32*PI**2*D0) * (v**2 / (Du)) * &
-                         !(z+1)* splg(k)*splz(l)*dzq*dgp*dv
+                        contrib_f1_ku = 2.d0 /&
+                        (32*PI**2*D0) * (v**2 / (Du)) * &
+                        (z+1)* splg(k)*splz(l)*dzq*dgp*dv
 
-                        !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_C0 + contrib_f1
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
+                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_C0_ku + contrib_f1_ku
+                        !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
                     IF (DEBUG_TERMOS .AND. .NOT. printou_termos &
@@ -365,6 +366,16 @@
                       WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
                       WRITE(18,'(A,ES24.15)') " v**2/Du**2              = ", v**2/(Du**2)
                       WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_escu
+                      WRITE(18,*) ""
+                      WRITE(18,*) "--- contrib_C0_ku e contrib_f1_ku (ramo superior) ---"
+                      WRITE(18,'(A,ES24.15)') " contrib_C0_ku (com splines/jacob.)    = ", contrib_C0_ku
+                      WRITE(18,'(A,ES24.15)') " contrib_C0_ku (sem splines/jacob.)    = ", &
+                          1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * Co_ku
+                      WRITE(18,'(A,ES24.15)') " contrib_f1_ku (com splines/jacob.)    = ", contrib_f1_ku
+                      WRITE(18,'(A,ES24.15)') " contrib_f1_ku (sem splines/jacob.)    = ", &
+                          2.d0 / (32*PI**2*D0) * (v**2 / (Du)) * (z+1)
+                      WRITE(18,'(A,ES24.15)') " soma contrib_C0_ku + contrib_f1_ku    = ", &
+                          contrib_C0_ku + contrib_f1_ku
 !$OMP END CRITICAL (TERMOS_DBG)
                     END IF
 
@@ -404,14 +415,14 @@
                         contrib_escd = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
                         ((1.d0 - z)**2)*splg(k)*splz(l)*dzq*dgp*dv
 
-                        !contrib_C0_kd = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
-                        !C0_kd* splg(k)*splz(l)*dzq*dgp*dv
+                        contrib_C0_kd = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
+                        Co_kd* splg(k)*splz(l)*dzq*dgp*dv
 
-                        !contrib_f1_kd = 2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * &
-                        !(1.d0-z) * splg(k)*splz(l)*dzq*dgp*dv
+                        contrib_f1_kd = 2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * &
+                        (1.d0-z) * splg(k)*splz(l)*dzq*dgp*dv
 
-                        !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_C0_kd + contrib_f1_kd
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
+                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_C0_kd + contrib_f1_kd
+                        !zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
                     IF (DEBUG_TERMOS .AND. .NOT. printou_termos &
@@ -433,6 +444,16 @@
                       WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
                       WRITE(18,'(A,ES24.15)') " v**2/Dd**2              = ", v**2/(Dd**2)
                       WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_escd
+                      WRITE(18,*) ""
+                      WRITE(18,*) "--- contrib_C0_kd e contrib_f1_kd (ramo inferior) ---"
+                      WRITE(18,'(A,ES24.15)') " contrib_C0_kd (com splines/jacob.)    = ", contrib_C0_kd
+                      WRITE(18,'(A,ES24.15)') " contrib_C0_kd (sem splines/jacob.)    = ", &
+                          1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * Co_kd
+                      WRITE(18,'(A,ES24.15)') " contrib_f1_kd (com splines/jacob.)    = ", contrib_f1_kd
+                      WRITE(18,'(A,ES24.15)') " contrib_f1_kd (sem splines/jacob.)    = ", &
+                          2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * (1.d0-z)
+                      WRITE(18,'(A,ES24.15)') " soma contrib_C0_kd + contrib_f1_kd    = ", &
+                          contrib_C0_kd + contrib_f1_kd
                       WRITE(18,*) ""
                       WRITE(18,'(A,ES24.15)') " zmatrix(index1,index2) acumulada = ", &
                                                zmatrix(index1,index2)
