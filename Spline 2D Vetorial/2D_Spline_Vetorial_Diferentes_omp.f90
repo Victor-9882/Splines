@@ -1,8 +1,10 @@
+      PROGRAM SPLINE_VETORIAL
+      USE OMP_LIB
       IMPLICIT NONE
 
 !===================== Dimensoes fixas do problema =====================
-      INTEGER, PARAMETER :: NMG   = 24              !Numero de splines em gamma
-      INTEGER, PARAMETER :: NMZ   = 30             !Numero de splines em z
+      INTEGER, PARAMETER :: NMG   = 50            !Numero de splines em gamma
+      INTEGER, PARAMETER :: NMZ   = 50             !Numero de splines em z
       INTEGER, PARAMETER :: NMA   = NMG*NMZ         !Dimensao do problema de autovalores
       INTEGER, PARAMETER :: LWORK = 10*NMA          !Tamanho do buffer de trabalho do LAPACK
 
@@ -15,17 +17,17 @@
       INTEGER :: IW                                 !Unidade de saida dos diagnosticos de malha
 
 !===================== Matrizes do problema generalizado ===============
-      DOUBLE PRECISION :: XMATRIX(NMA,NMA)          !Lado esquerdo (norma)
-      DOUBLE PRECISION :: ZMATRIX(NMA,NMA)          !Lado direito (kernel)
-      DOUBLE PRECISION :: c(NMG,NMZ)                !Coeficientes cij do autovetor fundamental
+      DOUBLE PRECISION, ALLOCATABLE :: XMATRIX(:,:)  !Lado esquerdo (norma)
+      DOUBLE PRECISION, ALLOCATABLE :: ZMATRIX(:,:)  !Lado direito (kernel)
+      DOUBLE PRECISION, ALLOCATABLE :: c(:,:)        !Coeficientes cij do autovetor fundamental
 
 !===================== Saida do DGGEV ==================================
-      DOUBLE PRECISION :: ALPHAR(NMA), ALPHAI(NMA)  !Numeradores do autovalor generalizado
-      DOUBLE PRECISION :: BETA(NMA)                 !Denominador do autovalor generalizado
-      DOUBLE PRECISION :: WR(NMA), WI(NMA)          !Autovalores lambda = alpha/beta
-      DOUBLE PRECISION :: VR(NMA,NMA)               !Autovetores a direita
-      DOUBLE PRECISION :: VL(NMA,2*NMA)             !Autovetores a esquerda (nao calculados)
-      DOUBLE PRECISION :: WORK(LWORK)               !Buffer de trabalho do LAPACK
+      DOUBLE PRECISION, ALLOCATABLE :: ALPHAR(:), ALPHAI(:) !Numeradores do autovalor generalizado
+      DOUBLE PRECISION, ALLOCATABLE :: BETA(:)      !Denominador do autovalor generalizado
+      DOUBLE PRECISION, ALLOCATABLE :: WR(:), WI(:) !Autovalores lambda = alpha/beta
+      DOUBLE PRECISION, ALLOCATABLE :: VR(:,:)      !Autovetores a direita
+      DOUBLE PRECISION, ALLOCATABLE :: VL(:,:)      !Autovetores a esquerda (nao calculados)
+      DOUBLE PRECISION, ALLOCATABLE :: WORK(:)      !Buffer de trabalho do LAPACK
       INTEGER :: INFO                               !Codigo de erro do LAPACK
 
 !===================== Pontos e pesos de Gauss (COMMON) ================
@@ -71,6 +73,28 @@
       !Ponto do dominio escolhido para o diagnostico
       INTEGER :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
       LOGICAL :: printou_termos
+      !Diagnostico desligado em paralelo: o bloco de WRITE(18,...) dentro do
+      !laco serializa as threads e escreve concorrentemente na mesma unidade.
+      LOGICAL, PARAMETER :: DEBUG_TERMOS = .FALSE.
+
+!===================== Cronometragem OpenMP ============================
+      DOUBLE PRECISION :: TSTART, TEND, TSTART_EIG, TEND_EIG
+      INTEGER :: NTHREADS, NTHREADS_MKL
+      INTEGER, EXTERNAL :: MKL_GET_MAX_THREADS
+
+!===================== Acompanhamento do progresso =====================
+      INTEGER :: NFEITOS                            !Pares (i,j) ja concluidos (COMPARTILHADO)
+      INTEGER :: NFEITOS_LOC                        !Copia local do contador (PRIVATE)
+      INTEGER :: NTOTAL                             !Total de pares = Nmg*Nmz
+      INTEGER :: NPASSO                             !Imprime a cada NPASSO pares concluidos
+      DOUBLE PRECISION :: TAGORA, TDECOR, TRESTA    !Tempos para a estimativa
+      DOUBLE PRECISION :: PCT                       !Percentual concluido
+
+!===================== Alocacao dos arrays grandes no heap =============
+        ALLOCATE(XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA), c(NMG,NMZ))
+        ALLOCATE(ALPHAR(NMA), ALPHAI(NMA), BETA(NMA))
+        ALLOCATE(WR(NMA), WI(NMA))
+        ALLOCATE(VR(NMA,NMA), VL(NMA,2*NMA), WORK(LWORK))
 
         open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
         open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
@@ -112,9 +136,6 @@
          & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, " gam0: ", gam0, &
          & " m1: ", m1, " m2: ", m2
           
-          !print*, Mtot, m, mu, kappa
-
-
             iw = 14
             N_intervalZ = (NMZ-1)/2
             N_intervalG = (NMG-1)/2
@@ -167,23 +188,7 @@
           WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
           WRITE(18,*) "--------------------------------------------------------"
 
-        
-      !Contrução das malhas
-            
-         !Malha do z
-          !CALL legauss(-1.d0,0.97d0,Nmz/2,zv,dzv,1.d-15)
-        	!CALL legauss(0.97d0,1.d0,Nmz/2,X,dX,1.d-15)
-
-            !CALL legauss(-1.d0,1d0,Nmz,zv,dzv,1.d-15)
-            
-        !do i=nmz/2+1,nmz
-           !zv(i)=x(i-nmz/2)
-        !end do
-    
-        !zv(1)=-1.d0
-        !zv(nmz)=1.d0
-
-
+        !--------Construção das malhas-----------------------------
         call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)  
         
@@ -193,10 +198,7 @@
 
         zv(1)=-0.999999d0
         zv(nmz)= 0.999999d0
-        
-        !Malha da Gamma
-        !CALL legauss(0.d0,3.d0,Nmg,gv,dY,1.d-15)
-           
+                   
 
         call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
         call COLLOC(IW,2,N_intervalG,Y,YG)  
@@ -208,26 +210,6 @@
         gv(1) = 0.d0
         gv(nmg) = 3.d0
 
-
-        !call setgaulag(0.d0,Nmg,gv,dY)
-
-        
-        !do i=1,nmg
-          !gv(i)=2.d0/gam0*gv(i)
-        !end do
-
-        !do i=1, nmg
-           !gv(i)=Y(i)
-        !enddo
-
-            !CALL legauss(0.d0, 1.d0, Nmg, T, dT, 1.d-15)
-
-              !do p = 1, Nmg
-                  !gv  = T(p) / (1.d0 - T(p))          ! ??
-                  !dgp = dT(p) / (1.d0 - T(p))**2      ! jacobiano
-              !end do
-
-        !print*, gv
     !Preparação das Splines
         call SPLGR1 (zv,Nmz)
         call SPLGR2 (gv,Nmg)
@@ -238,31 +220,56 @@
         !Pesos e absissas de Gauss-Legendre para cada variável
         CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
         CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
-        !call setgaulag(0.d0,Ng,Y,dY)
-
-        !CALL legauss(-1.d0,1.d0,Ng,Y,dY,1.d-15)
-
-        !gam0 = 12.0d0
-        !do i=1,Ng
-          !Y(i)=2.d0/gam0*Y(i)
-          !dY(i)=2.d0/gam0*dY(i)
-        !end do
-        !print*, Y
-      
-
         CALL legauss(0.d0,1.d0,Nv,W,dW,1.d-15)
            
         
         zmatrix  = 0.d0
         xmatrix  = 0.d0
+
+        NTHREADS = 1
+!$      NTHREADS = OMP_GET_MAX_THREADS()
+        NTHREADS_MKL = MKL_GET_MAX_THREADS()
+        WRITE(*,'(A,I0,A,I0,A)') " Montagem das matrizes com ", NTHREADS, &
+                                  " thread(s) OpenMP (MKL_NUM_THREADS=", &
+                                  NTHREADS_MKL, ")..."
+        TSTART = 0.d0
+!$      TSTART = OMP_GET_WTIME()
+
+        NFEITOS = 0
+        NTOTAL  = Nmg*Nmz
+        !Cerca de 20 linhas de progresso ao longo de toda a montagem
+        NPASSO  = MAX(1, NTOTAL/20)
+
+!=======================================================================
+! PARALELIZACAO OpenMP
+!
+!   COLLAPSE(2)      : funde os lacos i e j num espaco de Nmg*Nmz
+!                      iteracoes, para saturar todas as threads.
+!   SCHEDULE(DYNAMIC): a CPU e hibrida (P-cores + E-cores, velocidades
+!                      diferentes); o balanceamento estatico deixaria os
+!                      P-cores esperando pelos E-cores na barreira final.
+!   Sem REDUCTION    : cada par (i,j) escreve na linha index1 = (j-1)*Nmg+i,
+!                      que e unica -> nao ha duas threads escrevendo na
+!                      mesma posicao de zmatrix/xmatrix. Deixa-las SHARED
+!                      evita replicar as matrizes por thread.
+!   PRIVATE          : todo escalar/vetor ESCRITO dentro do laco. Atencao a
+!                      SPLz e SPLg, sobrescritos por SPLMD1/SPLMD2 a cada
+!                      ponto de integracao.
+!=======================================================================
+!$OMP PARALLEL DO DEFAULT(SHARED) &
+!$OMP   PRIVATE(i, j, k, l, p, q, r, index1, index2, &
+!$OMP           g, z, gp, dgp, v, dv, zq, dzq, &
+!$OMP           SPLz, SPLg, &
+!$OMP           D0, Du, Dd, f1_ku, Co_ku, Co_kd, &
+!$OMP           contrib_escu, contrib_escd, &
+!$OMP           NFEITOS_LOC, TAGORA, TDECOR, TRESTA, PCT) &
+!$OMP   COLLAPSE(2) SCHEDULE(DYNAMIC)
         !Loop para cada elemento da Matriz
         do i=1,Nmg
-              g=gv(i)
-              print*, i
            do j=1,Nmz
+              g=gv(i)
               z=zv(j)
               index1 = (j-1)*Nmg + i           !Juntei cada ponto (gi, zj) num vetor coluna de dimensão Nmg*Nmz
-              !print*, j
               do k=1,Nmg
                 do l=1, Nmz
                     index2 = (l-1)*Nmg + k    !Juntei cada Iteração das Splines Sg e Sz da integração em um vetor coluna de dimenção Nmg*Nmz
@@ -326,10 +333,11 @@
                         zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
-                    IF (.NOT. printou_termos .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
+                    IF (DEBUG_TERMOS .AND. .NOT. printou_termos &
+                        .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
                         .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
                         .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
-
+!$OMP CRITICAL (TERMOS_DBG)
                       WRITE(18,*) ""
                       WRITE(18,*) "=== PONTO DO DOMINIO (indices) ==="
                       WRITE(18,'(A,7(I5))') " i, j, k, l, p, q, r = ", i, j, k, l, p, q, r
@@ -357,6 +365,7 @@
                       WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
                       WRITE(18,'(A,ES24.15)') " v**2/Du**2              = ", v**2/(Du**2)
                       WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_escu
+!$OMP END CRITICAL (TERMOS_DBG)
                     END IF
 
                          !TesteLog =  zmatrix (index1, index2)
@@ -405,10 +414,11 @@
                         zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
-                    IF (.NOT. printou_termos .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
+                    IF (DEBUG_TERMOS .AND. .NOT. printou_termos &
+                        .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
                         .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
                         .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
-
+!$OMP CRITICAL (TERMOS_DBG)
                       WRITE(18,*) ""
                       WRITE(18,*) "=== RAMO INFERIOR: z' de -1 ate z ==="
                       WRITE(18,'(A,ES24.15)') " zq      = ", zq
@@ -428,6 +438,7 @@
                                                zmatrix(index1,index2)
 
                       printou_termos = .TRUE.
+!$OMP END CRITICAL (TERMOS_DBG)
                     END IF
 
 
@@ -439,7 +450,9 @@
                         1.0d0 / ((g +gp + ((1-z**2)*kappa**2) + m**2*z**2)**2)*splg(k)*splz(l)*dgp
 
       !------- Lado esquerdo no ponto escolhido do dominio -------
-                    IF (i.EQ.i_dbg .AND. j.EQ.j_dbg .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg) THEN
+                    IF (DEBUG_TERMOS .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
+                        .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg) THEN
+!$OMP CRITICAL (TERMOS_DBG)
                       WRITE(18,*) ""
                       WRITE(18,*) "=== LADO ESQUERDO (xmatrix) ==="
                       WRITE(18,'(A,ES24.15)') " gp (ultimo p = Ng)      = ", gp
@@ -450,67 +463,69 @@
                       WRITE(18,'(A,ES24.15)') " splz(l) (em z)          = ", splz(l)
                       WRITE(18,'(A,ES24.15)') " xmatrix(index1,index2)  = ", xmatrix(index1,index2)
                       WRITE(18,*) "--------------------------------------------------------"
+!$OMP END CRITICAL (TERMOS_DBG)
                     END IF
                         end do
-                        
+
                enddo
            enddo
+
+      !------------------ Acompanhamento do progresso ------------------
+      ! Um par (i,j) acabou de ser concluido. ATOMIC garante que o
+      ! incremento nao se perca quando duas threads terminam ao mesmo
+      ! tempo; e muito mais barato que CRITICAL e roda uma vez por par,
+      ! nao por iteracao interna, entao nao pesa no desempenho.
+      ! A copia para NFEITOS_LOC evita ler a variavel compartilhada
+      ! (que outra thread pode estar alterando) na hora de imprimir.
+!$OMP ATOMIC CAPTURE
+              NFEITOS = NFEITOS + 1
+              NFEITOS_LOC = NFEITOS
+!$OMP END ATOMIC
+
+              ! So a thread que fechou um multiplo de NPASSO imprime,
+              ! para nao poluir a saida com Nmg*Nmz linhas.
+              IF (MOD(NFEITOS_LOC,NPASSO).EQ.0 .OR. NFEITOS_LOC.EQ.NTOTAL) THEN
+                 TAGORA = 0.d0
+!$               TAGORA = OMP_GET_WTIME()
+                 TDECOR = TAGORA - TSTART
+                 PCT    = 100.d0*DBLE(NFEITOS_LOC)/DBLE(NTOTAL)
+                 !Estimativa do tempo restante por extrapolacao linear
+                 TRESTA = 0.d0
+                 IF (NFEITOS_LOC.GT.0) &
+                    TRESTA = TDECOR*DBLE(NTOTAL-NFEITOS_LOC)/DBLE(NFEITOS_LOC)
+                 WRITE(*,'(A,I6,A,I6,A,F6.2,A,F9.1,A,F9.1,A)') &
+                    "   progresso: ", NFEITOS_LOC, " / ", NTOTAL, &
+                    "  (", PCT, "%)   decorrido ", TDECOR, &
+                    " s   resta ~", TRESTA, " s"
+                 FLUSH(6)
+              END IF
            enddo
     end do
-           
-    !print*, xmatrix
+!$OMP END PARALLEL DO
+
+!$      TEND = OMP_GET_WTIME()
+!$      WRITE(*,'(A,F12.3,A)') " Tempo de montagem das matrizes = ", &
+!$                             TEND-TSTART, " s"
+
           !Condicionar a matriz
             do i = 1, nma
                 xmatrix (i,i) = xmatrix (i,i) + e
             end do
 
-            
-! --- Copiar XMATRIX -> a, ZMATRIX -> b ---
-!do i=1,NMA
-   !do j=1,NMA
-      !b(i,j) = XMATRIX(i,j)
-      !a(i,j) = ZMATRIX(i,j)
-   !end do
-!end do
+                    
+        NTHREADS_MKL = MKL_GET_MAX_THREADS()
+        WRITE(*,'(A,I0,A)') " DGGEV com ", NTHREADS_MKL, " thread(s) MKL..."
 
-!print*, a, b
+        TSTART_EIG = 0.d0
+!$      TSTART_EIG = OMP_GET_WTIME()
 
-! --- Inverter b com LAPACK ---
-!call dgetrf(NMA, NMA, b, NMA, ipvt, info)
-!if (info /= 0) then
-   !write(6,*) 'ERRO em dgetrf, info = ', info
-   !stop
-!end if
-
-!call dgetri(NMA, b, NMA, ipvt, work, LWORK, info)
-!if (info /= 0) then
-   !write(6,*) 'ERRO em dgetri, info = ', info
-   !stop
-!end if
-
-! --- Formar c = b**(-1) * a ---
-!do i=1,nma
-   !do j=1,nma
-      !sum = 0.d0
-      !do k=1,nma
-         !sum = sum + b(i,k) * a(k,j)
-      !end do
-      !c(i,j) = sum
-   !end do
-!end do
-
-! --- Diagonalizar c ---
-!call dgeev('N','V',nma,c,NMA,wr,wi,vl,1,vr,NMA,work,lwork,info)
-!write(6,*) 'dgeev info = ',info
-
-!write(6,*) nma,' eigenvalues '
-!do i=1,nma
-   !write(6,*) i, wr(i), wi(i)
-!end do
-        
         CALL DGGEV('N', 'V', NMA, ZMATRIX, NMA, XMATRIX, NMA, &
                    ALPHAR, ALPHAI, BETA, VL, NMA, VR, NMA, &
                    WORK, LWORK, INFO)
+
+!$      TEND_EIG = OMP_GET_WTIME()
+!$      WRITE(*,'(A,F12.3,A)') " Tempo do DGGEV                 = ", &
+!$                             TEND_EIG-TSTART_EIG, " s"
 
         ! Verificação de erro
         IF (INFO .NE. 0) THEN
@@ -558,11 +573,11 @@
          WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
       END DO
      
-
-
-
-
       end do
+
+      DEALLOCATE(XMATRIX, ZMATRIX, c)
+      DEALLOCATE(ALPHAR, ALPHAI, BETA, WR, WI)
+      DEALLOCATE(VR, VL, WORK)
 
       CLOSE(16)
       CLOSE(18)

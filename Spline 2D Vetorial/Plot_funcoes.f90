@@ -1,30 +1,92 @@
-IMPLICIT DOUBLE PRECISION(a-h,o-z)
+    IMPLICIT NONE
 
-    INTEGER :: NMG, NMZ, NMA, LWORK
-    DOUBLE PRECISION, ALLOCATABLE :: XMATRIX(:,:), ZMATRIX(:,:)
-    DOUBLE PRECISION, ALLOCATABLE :: VR(:,:), VL(:,:)
-    DOUBLE PRECISION, ALLOCATABLE :: WR(:), WI(:), WORK(:)
-    DOUBLE PRECISION, ALLOCATABLE :: zv(:), splz(:), splg(:), gv(:)
-    DOUBLE PRECISION, ALLOCATABLE :: dzv(:), dgv(:), ALPHAR(:), ALPHAI(:)
-    DOUBLE PRECISION, ALLOCATABLE :: BETA(:), c(:,:)
-    DOUBLE PRECISION, ALLOCATABLE :: XG(:), YG(:)
-
-    INTEGER, ALLOCATABLE :: ipvt(:)
+    ! -----------------------------------------------------------------
+    ! BLOCOS COMMON
+    !   PI       : constante pi, compartilhada com as rotinas
+    !   ALPHAINT : malhas e pesos de quadratura (Gauss-Legendre) usados
+    !              tanto aqui quanto pelas rotinas legauss/G1D/COLLOC
+    ! -----------------------------------------------------------------
+    DOUBLE PRECISION :: PI
     COMMON/PARAM/PI
-    COMMON/ALPHAINT/X(1000),DX(1000), Y(1000),DY(1000) &
-    , W(1000),DW(1000), Nz, Ng, Nv, det (1000)
-    INTEGER :: ii, jj, i, j, k, l & 
-    ,index1, index2, p, q, r, NPARAM, N_intervalZ, NCOL, N_intervalG
-    INTEGER :: INFO, LDVL, IPRINTEIGEN, N_PLOT, k_max, k_min
-    INTEGER :: N_PLOT_G, N_PLOT_Z, p_plot
-    DOUBLE PRECISION :: LAMBDAR,  LAMBDAI, e, m, Mtot, mu, kappa, gam0, soma &
-        , IntegralV, num2, max_gamma_visualizacao, m1, m2
-    DOUBLE PRECISION :: dist_long, dist_trans, kperp, gamma_ext, dgamma_ext &
-        , z_ext, dz_ext, Norma
 
-    INTEGER :: Nnz (100), Nng (100), Nnv (100) 
+    DOUBLE PRECISION :: X, DX, Y, DY, W, DW
+    INTEGER          :: Nz, Ng, Nv
+    COMMON/ALPHAINT/X(1000), DX(1000), Y(1000), DY(1000) &
+        , W(1000), DW(1000), Nz, Ng, Nv
 
-    DOUBLE PRECISION, EXTERNAL :: f_map, Jacobian_map, inverse_map
+    ! -----------------------------------------------------------------
+    ! DIMENSOES DO PROBLEMA
+    !   NMZ/NMG : numero de splines em z e em gamma
+    !   NMA     : dimensao total do produto tensorial (NMG*NMZ)
+    !   NPARAM  : quantos pares (Nng,Nnz) serao lidos de inputs.dat
+    ! -----------------------------------------------------------------
+    INTEGER :: NMG, NMZ, NMA, NPARAM
+    INTEGER :: N_intervalZ, N_intervalG
+    INTEGER :: Nnz(100), Nng(100)
+
+    ! -----------------------------------------------------------------
+    ! MALHAS E BASES DE SPLINE
+    !   zv/gv     : nos das malhas em z e em gamma
+    !   splz/splg : valores das bases de spline no ponto avaliado
+    !   XG/YG     : pontos de colocacao de Gauss em z e em gamma
+    !   c         : coeficientes da expansao, lidos de coeficientes.dat
+    ! -----------------------------------------------------------------
+    DOUBLE PRECISION, ALLOCATABLE :: zv(:), gv(:)
+    DOUBLE PRECISION, ALLOCATABLE :: splz(:), splg(:)
+    DOUBLE PRECISION, ALLOCATABLE :: XG(:), YG(:)
+    DOUBLE PRECISION, ALLOCATABLE :: c(:,:)
+
+    ! -----------------------------------------------------------------
+    ! PARAMETROS FISICOS
+    !   m1, m2 : massas dos constituintes; m e a media
+    !   Mtot   : massa total do sistema ligado
+    !   kappa  : sqrt(m^2 - Mtot^2/4), momento de ligacao
+    ! -----------------------------------------------------------------
+    DOUBLE PRECISION :: m1, m2, m, Mtot, kappa
+
+    ! -----------------------------------------------------------------
+    ! CONTROLE DOS PLOTS
+    !   iw                     : unidade de saida das rotinas de malha
+    !   N_PLOT/N_PLOT_G/_Z     : numero de pontos de cada varredura
+    !   max_gamma_visualizacao : truncamento superior em gamma
+    !   z_fixo/gamma_fixo      : cortes usados nos plots de g
+    !   gamma_num/gamma_den    : gamma do numerador/denominador de Psi
+    !   z_num/z_den            : z do numerador/denominador de Psi
+    ! -----------------------------------------------------------------
+    INTEGER          :: iw, N_PLOT, N_PLOT_G, N_PLOT_Z
+    DOUBLE PRECISION :: max_gamma_visualizacao
+    DOUBLE PRECISION :: z_fixo, gamma_fixo
+    DOUBLE PRECISION :: gamma_num, gamma_den, z_num, z_den
+
+    ! -----------------------------------------------------------------
+    ! CONTADORES DE LOOP
+    !   i, j       : indices das bases splg(i)/splz(j)
+    !   ii         : varre os pares (Nng,Nnz) de inputs.dat
+    !   p          : quadratura interna em gamma'
+    !   q, r       : quadraturas externas em gamma e em xi
+    !   k_plot, p_plot : indices das varreduras dos plots
+    ! -----------------------------------------------------------------
+    INTEGER :: i, j, ii, p, q, r, k_plot, p_plot
+
+    ! -----------------------------------------------------------------
+    ! ACUMULADORES E VARIAVEIS DE TRABALHO
+    !   g1_00      : valor de referencia de g, usado para normalizar
+    !   soma       : reconstrucao de g(gamma,z) a partir das splines
+    !   g_val      : g(gamma',z) dentro da integral do propagador
+    !   D_num/D_den: denominador do propagador ao quadrado
+    !   psi_num/den: Psi no ponto do plot e no ponto de normalizacao
+    !   psi_norm   : razao Psi/Psi_den
+    !   gammap/dgp : ponto e peso da quadratura interna em gamma'
+    !   *_ext      : ponto e peso das quadraturas externas
+    !   Norma      : pi*Int dxi Int dgamma |Psi|^2, para reescalar
+    !   dist_long/trans : marginais u(xi) e D_perp(gamma)
+    ! -----------------------------------------------------------------
+    DOUBLE PRECISION :: g1_00, soma, g_val
+    DOUBLE PRECISION :: D_num, D_den, psi_num, psi_den, psi_norm
+    DOUBLE PRECISION :: gammap, dgp
+    DOUBLE PRECISION :: gamma_plot, z_plot, xi_plot
+    DOUBLE PRECISION :: gamma_ext, dgamma_ext, xi_ext, dxi_ext, z_ext
+    DOUBLE PRECISION :: Norma, dist_long, dist_trans
 
 
     open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
@@ -36,7 +98,6 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
     open (unit = 14, file = 'erros.dat', status='unknown')
     open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
 
-    e = 0.0001d0
     PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
         !Parâmetros
@@ -45,10 +106,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
         m1 = 1.0d0
         m2 = 2.3d0
         m = (m1+m2)/2
-        mu = 1.8d0
         kappa = sqrt(m**2 - 0.25*Mtot**2)
-
-        gam0 = 10.0d0
 
         Nz = 60
         Ng = 60
@@ -67,19 +125,12 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
         NMZ = Nnz(ii)
 
         NMA = NMG * NMZ
-        LWORK = 10 * NMA
 
         !ALOCAR VARIÁVEIS
-        ALLOCATE( XMATRIX(NMA, NMA), ZMATRIX(NMA, NMA))
-        ALLOCATE( VR(NMA, NMA), VL(NMA, 2*NMA) )
-        ALLOCATE( WR(NMA), WI(NMA), WORK(LWORK) )
         ALLOCATE( zv(NMZ + 1), gv(NMG+1) )
         ALLOCATE( splz(NMZ), splg(NMG))
-        ALLOCATE( ALPHAR(NMA), ALPHAI(NMA), BETA(NMA) )
         ALLOCATE( c(NMA, NMA) )
         ALLOCATE( XG(NMA), YG(NMA) )
-        
-        ALLOCATE( ipvt(NMA) )
 
     ! Ler matriz de coeficientes
       DO I = 1, NMG
@@ -92,7 +143,6 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
         iw = 14
         N_intervalZ = (NMZ-1)/2
         N_intervalG = (NMG-1)/2
-        NCOL = 2    
 
         !Contrução das malhas
             
@@ -133,7 +183,7 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
         end do
 
        !g1_00 = abs(g1_00)
-        g1_00 = 0.d0
+        g1_00 = 1.d0
       !Plot de função x gamma para z fixo
       z_fixo = 0.8d0
       max_gamma_visualizacao = 3.d0
@@ -211,15 +261,12 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
       CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
       ! Integrando em gama' usando os pontos de Gauss Y(p) em [-1, 1]
       do p = 1, Ng
-          tp = Y(p)         
-          wtp = dY(p)       
-          
-          gammap = tp
-          dgp = wtp
-          
-          ! Avalia a spline em gama' (auxiliar tp)
-          call SPLMD2(gv, Nmg, tp, splg)
-          
+          gammap = Y(p)
+          dgp    = dY(p)
+
+          ! Avalia a spline em gama'
+          call SPLMD2(gv, Nmg, gammap, splg)
+
           ! Constrói g(gammap, z_den)
           g_val = 0.d0
           do j = 1, Nmz
@@ -251,14 +298,11 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
           
           ! Integrando em gama' para o gamma_plot atual
           do p = 1, Ng
-              tp = Y(p)
-              wtp = dY(p)
-              
-              gammap = tp
-              dgp = wtp
-              
-              call SPLMD2(gv, Nmg, tp, splg)
-              
+              gammap = Y(p)
+              dgp    = dY(p)
+
+              call SPLMD2(gv, Nmg, gammap, splg)
+
               g_val = 0.d0
               do j = 1, Nmz
                   do i = 1, Nmg
@@ -302,14 +346,11 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
           
           ! Integrando em gama' usando os pontos de Gauss Y(p) em [0, inf]
           do p = 1, Ng
-              tp = Y(p)
-              wtp = dY(p)
-              
-              gammap = tp
-              dgp = wtp
-              
+              gammap = Y(p)
+              dgp    = dY(p)
+
               ! Avalia a spline em gamma'
-              call SPLMD2(gv, Nmg, tp, splg)
+              call SPLMD2(gv, Nmg, gammap, splg)
               
               ! Constrói g(gammap, z_plot) combinando as splines e os coeficientes
               g_val = 0.d0
@@ -338,49 +379,51 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
       close(17)
 
       ! =============================================================
-      ! DISTRIBUICOES DE MOMENTO
+      ! DISTRIBUICOES DE MOMENTO  (eqs. 4, 5 e 6)
       !
-      ! Psi(gamma,z) = Int_0^inf dgamma' g(gamma',z)
-      !                / [gamma + gamma' + m^2 z^2 + (1-z^2) kappa^2]^2
+      ! Psi(gamma,xi) = Int_0^inf dgamma' g(gamma',z)
+      !                 / [gamma + gamma' + m^2 z^2 + (1-z^2) kappa^2]^2
+      ! com a mudanca de variavel  xi = (1-z)/2  <=>  z = 1 - 2*xi,
+      ! de modo que xi in [0,1] corresponde a z in [-1,1] e dz = -2 dxi.
       !
-      ! gamma = |k_perp|^2  (momento transversal)
-      ! z                   (momento longitudinal)
+      ! (4) f1(gamma,xi)  = pi * |Psi(gamma,xi)|^2          -> plot 3D
+      ! (5) u(xi)         = pi * Int_0^inf dgamma |Psi|^2   -> PDF (long.)
+      ! (6) D_perp(gamma) = pi * Int_0^1   dxi   |Psi|^2    -> transversal
       !
-      ! (a) plot_psi2_3d.dat   : |Psi(gamma,z)|^2 na malha (gamma,z)
-      ! (b) plot_dist_long.dat : P(z)     = Int_{-1}^{1} dz  ... -> em z
-      ! (c) plot_dist_trans.dat: P(k_perp)= Int dz |Psi|^2, com
-      !     Jacobiano 2 k_perp dk_perp = dgamma (pois gamma = k_perp^2)
-      !
-      ! NORMALIZACAO: todas as tres curvas sao divididas pela MESMA
-      ! constante
-      !     Norma = Int_0^{gamma_max} dgamma Int_{-1}^{1} dz |Psi|^2
-      ! Assim a densidade 2D integra 1 e as duas distribuicoes marginais
-      ! (longitudinal e transversal) tambem integram 1 automaticamente,
-      ! pois sao marginais da MESMA densidade normalizada. Usar uma
-      ! constante por curva quebraria essa consistencia mutua.
+      ! NORMALIZACAO (eq. da mensagem):
+      !     pi * Int_0^1 dxi Int_0^inf dgamma |Psi(xi,gamma)|^2 = 1
+      ! Impomos isso reescalando Psi por 1/sqrt(Norma), onde
+      !     Norma = pi * Int_0^1 dxi Int_0^{gamma_max} dgamma |Psi|^2
+      ! calculada com a MESMA Psi usada nos tres plots. Assim f1 integra
+      ! 1 no plano (gamma,xi) e u(xi), D_perp(gamma) sao marginais
+      ! consistentes: Int_0^1 u dxi = Int_0^inf D_perp dgamma = 1.
       ! =============================================================
 
       ! Pontos/pesos de Gauss em gamma' para a integral interna do propagador
       CALL legauss(0.d0, 3.d0, Ng, Y, dY, 1.d-15)
 
-      ! Malha do plot 3D
+      ! Malha dos plots
       N_PLOT_G = 200
       N_PLOT_Z = 200
       max_gamma_visualizacao = 3.d0
 
       ! ------------------------------------------------------------
       ! CONSTANTE DE NORMALIZACAO
-      !   Norma = Int dgamma Int dz |Psi(gamma,z)|^2
-      ! Calculada por quadratura de Gauss nas duas variaveis (mais
-      ! precisa que a regra do trapezio sobre a malha do plot).
+      !   Norma = pi * Int_0^1 dxi Int_0^{gamma_max} dgamma |Psi|^2
+      ! Quadratura de Gauss nas duas variaveis: xi direto em [0,1]
+      ! (o jacobiano dz = -2 dxi ja esta embutido em integrar em xi).
       ! ------------------------------------------------------------
       CALL legauss(0.d0, 3.d0, Nv, W, dW, 1.d-15)                  ! em gamma
-      CALL legauss(-0.999999d0, 0.999999d0, Nz, X, dX, 1.d-15)     ! em z
+      CALL legauss(0.d0, 1.d0, Nz, X, dX, 1.d-15)                  ! em xi
 
       Norma = 0.d0
       do r = 1, Nz
-          z_ext  = X(r)
-          dz_ext = dX(r)
+          xi_ext  = X(r)
+          dxi_ext = dX(r)
+
+          z_ext = 1.d0 - 2.d0*xi_ext
+          if (z_ext .le. -1.d0) z_ext = -0.999999d0
+          if (z_ext .ge.  1.d0) z_ext =  0.999999d0
 
           call SPLMD1(zv, Nmz, z_ext, splz)
 
@@ -410,19 +453,23 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
 
               psi_norm = psi_num / psi_den
 
-              Norma = Norma + (psi_norm**2) * dgamma_ext * dz_ext
+              Norma = Norma + PI * (psi_norm**2) * dgamma_ext * dxi_ext
           end do
       end do
 
-      WRITE(*,'(A,ES25.17E3)') " Constante de normalizacao (Int Int |Psi|^2) = ", Norma
+      WRITE(*,'(A,ES25.17E3)') &
+          " Norma = pi*Int dxi Int dgamma |Psi|^2 (antes do reescalonamento) = ", Norma
 
       ! ------------------------------------------------------------
-      ! (a) PLOT 3D: |Psi(gamma,z)|^2
+      ! (a) EQ. 4 -> PLOT 3D:  f1(gamma,xi) = pi |Psi(gamma,xi)|^2
+      !     Colunas: gamma, xi, f1
       ! ------------------------------------------------------------
       open(unit = 21, file = "plot_psi2_3d.dat", STATUS="UNKNOWN")
 
       do k_plot = 0, N_PLOT_Z
-          z_plot = -1.d0 + 2.d0 * dble(k_plot) / dble(N_PLOT_Z)
+          xi_plot = dble(k_plot) / dble(N_PLOT_Z)
+
+          z_plot = 1.d0 - 2.d0*xi_plot
           if (z_plot .le. -1.d0) z_plot = -0.999999d0
           if (z_plot .ge.  1.d0) z_plot =  0.999999d0
 
@@ -453,9 +500,10 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
 
               psi_norm = psi_num / psi_den
 
-              ! gamma, z, |Psi|^2 normalizado (integra 1 em dgamma dz)
+              ! f1 = pi |Psi|^2, com |Psi|^2 ja reescalado por 1/Norma
               ! (linhas em branco separam blocos p/ gnuplot)
-              write(21, '(3(1X,ES25.17E3))') gamma_plot, z_plot, (psi_norm**2)/Norma
+              write(21, '(3(1X,ES25.17E3))') gamma_plot, xi_plot, &
+                  PI * (psi_norm**2) / Norma
           end do
           write(21, *) ""
       end do
@@ -463,18 +511,21 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
       close(21)
 
       ! ------------------------------------------------------------
-      ! (b) DISTRIBUICAO LONGITUDINAL: integra |Psi|^2 em gamma
-      !     P(z) = Int_0^{gamma_max} dgamma |Psi(gamma,z)|^2 / Norma
-      !     Normalizada: Int_{-1}^{1} P(z) dz = 1
+      ! (b) EQ. 5 -> PDF LONGITUDINAL:
+      !     u(xi) = pi * Int_0^inf dgamma |Psi(gamma,xi)|^2
+      !     Normalizada: Int_0^1 u(xi) dxi = 1
+      !     Colunas: xi, u(xi)
       ! ------------------------------------------------------------
       open(unit = 22, file = "plot_dist_long.dat", STATUS="UNKNOWN")
 
-      ! Pontos de Gauss para a integral EXTERNA em gamma (variavel de integracao)
+      ! Pontos de Gauss para a integral EXTERNA em gamma
       CALL legauss(0.d0, 3.d0, Nv, W, dW, 1.d-15)
 
       N_PLOT = 400
       do k_plot = 0, N_PLOT
-          z_plot = -1.d0 + 2.d0 * dble(k_plot) / dble(N_PLOT)
+          xi_plot = dble(k_plot) / dble(N_PLOT)
+
+          z_plot = 1.d0 - 2.d0*xi_plot
           if (z_plot .le. -1.d0) z_plot = -0.999999d0
           if (z_plot .ge.  1.d0) z_plot =  0.999999d0
 
@@ -507,45 +558,38 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
 
               psi_norm = psi_num / psi_den
 
-              dist_long = dist_long + (psi_norm**2) * dgamma_ext
+              dist_long = dist_long + PI * (psi_norm**2) * dgamma_ext
           end do
 
-          write(22, '(2(1X,ES25.17E3))') z_plot, dist_long/Norma
+          write(22, '(2(1X,ES25.17E3))') xi_plot, dist_long/Norma
       end do
 
       close(22)
 
       ! ------------------------------------------------------------
-      ! (c) DISTRIBUICAO TRANSVERSAL: integra |Psi|^2 em z de -1 a 1
-      !     P(k_perp) = Int_{-1}^{1} dz |Psi(k_perp^2, z)|^2
-      !
-      !     Jacobiano: gamma = |k_perp|^2  =>  dgamma = 2 k_perp dk_perp,
-      !     de modo que Int 2 k_perp dk_perp F = Int dgamma F.
-      !     A coluna 3 traz  2*k_perp*P(k_perp), a densidade ja com o
-      !     Jacobiano, cuja integral em dk_perp de 0 a sqrt(3) reproduz
-      !     a integral em dgamma de 0 a 3.
-      !
-      !     Normalizada pela mesma constante Norma, de modo que
-      !         Int_0^{sqrt(3)} 2 k_perp P(k_perp) dk_perp = 1
-      !     equivalentemente Int_0^{3} P dgamma = 1.  Note que quem
-      !     integra 1 e a coluna 3 (densidade em dk_perp); a coluna 2
-      !     integra 1 quando integrada em dgamma.
+      ! (c) EQ. 6 -> DISTRIBUICAO TRANSVERSAL:
+      !     D_perp(gamma) = pi * Int_0^1 dxi |Psi(gamma,xi)|^2
+      !     Normalizada: Int_0^inf D_perp(gamma) dgamma = 1
+      !     Colunas: gamma, D_perp(gamma)
       ! ------------------------------------------------------------
       open(unit = 23, file = "plot_dist_trans.dat", STATUS="UNKNOWN")
 
-      ! Pontos de Gauss para a integral EXTERNA em z
-      CALL legauss(-1.d0, 1.d0, Nz, X, dX, 1.d-15)
+      ! Pontos de Gauss para a integral EXTERNA em xi, direto em [0,1]
+      CALL legauss(0.d0, 1.d0, Nz, X, dX, 1.d-15)
 
       N_PLOT = 800
       do k_plot = 0, N_PLOT
-          ! Varredura uniforme em k_perp ate o truncamento sqrt(gamma_max)
-          kperp = (dble(k_plot) / dble(N_PLOT)) * dsqrt(max_gamma_visualizacao)
-          gamma_plot = kperp**2
+          ! Varredura uniforme em gamma ate o truncamento gamma_max
+          gamma_plot = (dble(k_plot) / dble(N_PLOT)) * max_gamma_visualizacao
 
           dist_trans = 0.d0
           do q = 1, Nz
-              z_ext  = X(q)
-              dz_ext = dX(q)
+              xi_ext  = X(q)
+              dxi_ext = dX(q)
+
+              z_ext = 1.d0 - 2.d0*xi_ext
+              if (z_ext .le. -1.d0) z_ext = -0.999999d0
+              if (z_ext .ge.  1.d0) z_ext =  0.999999d0
 
               call SPLMD1(zv, Nmz, z_ext, splz)
 
@@ -571,35 +615,25 @@ IMPLICIT DOUBLE PRECISION(a-h,o-z)
 
               psi_norm = psi_num / psi_den
 
-              dist_trans = dist_trans + (psi_norm**2) * dz_ext
+              dist_trans = dist_trans + PI * (psi_norm**2) * dxi_ext
           end do
 
-          ! k_perp, P(k_perp), 2*k_perp*P(k_perp)  (densidade com Jacobiano)
-          ! ambas ja normalizadas por Norma
-          write(23, '(3(1X,ES25.17E3))') kperp, dist_trans/Norma
+          write(23, '(2(1X,ES25.17E3))') gamma_plot, dist_trans/Norma
       end do
 
       close(23)
 
 
-      DEALLOCATE(XMATRIX, ZMATRIX, WORK, VR, VL, WR, WI, splz)
-      DEALLOCATE(splg, ALPHAR, ALPHAI, BETA, c, XG, YG, gv, zv)
-      DEALLOCATE(IPVT)
-      
+      DEALLOCATE(splz, splg, c, XG, YG, gv, zv)
+
 
       end do
 
-      close (15)      
+      close (15)
       CLOSE(10)
       CLOSE(12)
       close(13)
-10     FORMAT(11E12.4)
-18     format(5e15.6)
-20     FORMAT(A70)
-
-       
       close (14)
-       Close(2)
     END
 
 
