@@ -96,15 +96,15 @@
     open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
     open (unit = 13, file = "plotalfa.dat",STATUS="UNKNOWN")
     open (unit = 14, file = 'erros.dat', status='unknown')
-    open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
+    open (UNIT = 20, FILE = "inputs_plot.dat", STATUS="UNKNOWN")
 
     PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
         !Parâmetros
         !Massas
-        Mtot = 2.3d0
+        Mtot = 1.9d0
         m1 = 1.0d0
-        m2 = 2.3d0
+        m2 = 1.0d0
         m = (m1+m2)/2
         kappa = sqrt(m**2 - 0.25*Mtot**2)
 

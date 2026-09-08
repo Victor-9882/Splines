@@ -4,7 +4,7 @@
 
 !===================== Dimensoes fixas do problema =====================
       INTEGER, PARAMETER :: NMG   = 24           !Numero de splines em gamma
-      INTEGER, PARAMETER :: NMZ   = 24           !Numero de splines em z
+      INTEGER, PARAMETER :: NMZ   = 24        !Numero de splines em z
       INTEGER, PARAMETER :: NMA   = NMG*NMZ         !Dimensao do problema de autovalores
       INTEGER, PARAMETER :: LWORK = 10*NMA          !Tamanho do buffer de trabalho do LAPACK
 
@@ -78,7 +78,7 @@
       LOGICAL :: printou_termos
       !Diagnostico desligado em paralelo: o bloco de WRITE(18,...) dentro do
       !laco serializa as threads e escreve concorrentemente na mesma unidade.
-      LOGICAL, PARAMETER :: DEBUG_TERMOS = .FALSE.
+      LOGICAL, PARAMETER :: DEBUG_TERMOS = .TRUE.
 
 !===================== Cronometragem OpenMP ============================
       DOUBLE PRECISION :: TSTART, TEND, TSTART_EIG, TEND_EIG
@@ -188,6 +188,17 @@
           WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
           WRITE(18,*) "--------------------------------------------------------"
 
+
+       !CALL legauss(-1.d0,0.97d0,Nmz/2,zv,DX,1.d-15)
+   ! CALL legauss(0.97d0,1.d0,Nmz/2,X,dX,1.d-15)
+
+       ! do i=nmz/2+1,nmz
+            !zv(i)=x(i-nmz/2)
+        !end do
+
+        !zv(1)=-0.9999999d0
+        !zv(nmz)=0.999999d0
+
         call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)  
         
@@ -195,8 +206,8 @@
           zv(i+1) = XG(i)
         end do
 
-        zv(1)=-1.d0
-        zv(nmz)= 1.d0
+        zv(1)=-0.9999999d0
+        zv(nmz)= 0.9999999d0
 
         call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
         call COLLOC(IW,2,N_intervalG,Y,YG)  
@@ -308,7 +319,7 @@
         !Termos do Kernel
                       D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
 
-                      IF (.NOT. SING_U) THEN
+                      !IF (.NOT. SING_U) THEN
                       Du = 0.25d0 * ( &
                             Mtot**2 * (-v) * (z + 1.0d0) * (zq + 1.0d0) * ((v - 1.0d0) * z - v * zq + 1.0d0) &
                             + v * ( m1**2 * (z + 1.0d0) + 2.0d0 * m1 * m2 * (z + 1.0d0) + &
@@ -340,7 +351,7 @@
 
                         !zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_ku - contrib_f1_ku
                         zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
-                      END IF !.NOT. SING_U
+                      !END IF !.NOT. SING_U
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
                     IF (DEBUG_TERMOS .AND. .NOT. SING_U .AND. .NOT. printou_termos &
@@ -404,7 +415,7 @@
 
                         D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
 
-                        IF (.NOT. SING_D) THEN
+                        !IF (.NOT. SING_D) THEN
                         Dd = 0.25d0 * ( &
                             Mtot**2 * v * (z - 1.0d0) * (zq - 1.0d0) * ((v - 1.0d0) * z - v * zq - 1.0d0) &
                             + v * ( m1**2 * (-4.0d0 * v * z + 4.0d0 * (v - 1.0d0) * zq + 3.0d0 * z + 1.0d0) &
@@ -433,8 +444,8 @@
                         (1.d0-z) * splg(k)*splz(l)*dzq*dgp*dv
 
                         !zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_kd - contrib_f1_kd
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escd
-                        END IF !.NOT. SING_D
+                        zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escd
+                        !END IF !.NOT. SING_D
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
                     IF (DEBUG_TERMOS .AND. .NOT. SING_D .AND. .NOT. printou_termos &
