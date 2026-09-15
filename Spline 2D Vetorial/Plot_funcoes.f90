@@ -102,9 +102,9 @@
 
         !Parâmetros
         !Massas
-        Mtot = 1.9d0
+        Mtot = 2.3d0
         m1 = 1.0d0
-        m2 = 1.0d0
+        m2 = 2.3d0
         m = (m1+m2)/2
         kappa = sqrt(m**2 - 0.25*Mtot**2)
 

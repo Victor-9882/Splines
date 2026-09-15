@@ -3,14 +3,13 @@
       IMPLICIT NONE
 
 !===================== Dimensoes fixas do problema =====================
-      INTEGER, PARAMETER :: NMG   = 24           !Numero de splines em gamma
-      INTEGER, PARAMETER :: NMZ   = 24        !Numero de splines em z
+      INTEGER, PARAMETER :: NMG   = 20        !Numero de splines em gamma
+      INTEGER, PARAMETER :: NMZ   = 20      !Numero de splines em z
       INTEGER, PARAMETER :: NMA   = NMG*NMZ         !Dimensao do problema de autovalores
       INTEGER, PARAMETER :: LWORK = 10*NMA          !Tamanho do buffer de trabalho do LAPACK
 
 !===================== Malhas e bases de splines =======================
       DOUBLE PRECISION :: zv(NMZ+1), gv(300)        !Nos das malhas em z e em gamma (= pontos de colocacao)
-      DOUBLE PRECISION :: splz(NMZ), splg(NMG)      !Splines avaliadas no ponto corrente
       INTEGER :: IW                                 !Unidade de saida dos diagnosticos de malha
       INTEGER :: N_intervalZ, N_intervalG           !Numero de intervalos das malhas
       INTEGER :: NCOL                               !Pontos de colocacao por intervalo
@@ -49,49 +48,26 @@
       DOUBLE PRECISION :: e                         !Regularizacao da diagonal de XMATRIX
       DOUBLE PRECISION :: Alfa                      !Constante de acoplamento extraida de wr(1)
 
+!===================== Selecao do kernel ===============================
+      !'v' -> kernel vetorial (C0 + f1);  qualquer outro -> kernel escalar
+      CHARACTER :: kernel_type
+
 !===================== Conjuntos de parametros lidos de inputs.dat =====
       INTEGER :: NPARAM                             !Numero de conjuntos a processar
       INTEGER :: Nnz(100), Nng(100), Nnv(100)       !Pontos de Gauss de cada conjunto
 
-!===================== Variaveis do loop de montagem ===================
+!===================== Variaveis do laco externo =======================
       INTEGER :: ii                                 !Indice do conjunto de parametros
-      INTEGER :: i, j                               !Indices do ponto de colocacao (g_i, z_j)
-      INTEGER :: k, l                               !Indices das splines em gamma e z
-      INTEGER :: p, q, r                            !Indices de Gauss em gamma', z' e v
-      INTEGER :: index1, index2                     !Linha e coluna da matriz (achatamento 2D->1D)
-      DOUBLE PRECISION :: z, g                      !Ponto de colocacao corrente
-      DOUBLE PRECISION :: zq, dzq                   !Abscissa e peso em z'
-      DOUBLE PRECISION :: gp, dgp                   !Abscissa e peso em gamma'
-      DOUBLE PRECISION :: v, dv                     !Abscissa e peso em v
-      DOUBLE PRECISION :: D0                        !Denominador comum do kernel
-      DOUBLE PRECISION :: Du, Dd                    !Denominadores dos ramos z'>z e z'<z
-      DOUBLE PRECISION :: f1_ku, Co_ku              !Termos do numerador no ramo superior
-      DOUBLE PRECISION :: Co_kd                     !Termo do numerador no ramo inferior
-      LOGICAL :: SING_U, SING_D                     !z=-1 (ramo Du) / z=+1 (ramo Dd): 0/0 removivel
-      DOUBLE PRECISION, PARAMETER :: TOL_SING = 1.D-10 !Tolerancia em torno de z=+-1
-      DOUBLE PRECISION :: contrib_escu, contrib_escd  !Contribuicoes escalares de cada ramo
-      DOUBLE PRECISION :: contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku
+      INTEGER :: i, j                               !Indices genericos
 
 !===================== Diagnostico em termos.dat =======================
       !Ponto do dominio escolhido para o diagnostico
       INTEGER :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
-      LOGICAL :: printou_termos
-      !Diagnostico desligado em paralelo: o bloco de WRITE(18,...) dentro do
-      !laco serializa as threads e escreve concorrentemente na mesma unidade.
       LOGICAL, PARAMETER :: DEBUG_TERMOS = .TRUE.
 
 !===================== Cronometragem OpenMP ============================
-      DOUBLE PRECISION :: TSTART, TEND, TSTART_EIG, TEND_EIG
-      INTEGER :: NTHREADS, NTHREADS_MKL
-
-
-!===================== Acompanhamento do progresso =====================
-      INTEGER :: NFEITOS                            !Pares (i,j) ja concluidos (COMPARTILHADO)
-      INTEGER :: NFEITOS_LOC                        !Copia local do contador (PRIVATE)
-      INTEGER :: NTOTAL                             !Total de pares = Nmg*Nmz
-      INTEGER :: NPASSO                             !Imprime a cada NPASSO pares concluidos
-      DOUBLE PRECISION :: TAGORA, TDECOR, TRESTA    !Tempos para a estimativa
-      DOUBLE PRECISION :: PCT                       !Percentual concluido
+      DOUBLE PRECISION :: TSTART_EIG, TEND_EIG
+      INTEGER :: NTHREADS_MKL
 
 !===================== Alocacao dos arrays grandes no heap =============
         ALLOCATE(XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA), c(NMG,NMZ))
@@ -106,19 +82,20 @@
         open (unit = 14, file = 'erros.dat', status='unknown')
         open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
         open (unit = 18, file = "termos.dat", STATUS="UNKNOWN")
-    
-        e = 0.0001d0
+
+        e = 0.000001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
       READ(20,*) NPARAM
+      READ(20,*) kernel_type
           DO I = 1, NPARAM
            READ(20,*) nnz(I), nng(I), nnv(I)
           END DO
     CLOSE(20)
-        
+
      !Parâmetros
           !Massas
-          Mtot = 2.3d0
+          Mtot = 3.2d0
           m1 = 1.0d0
           m2 = 2.3d0
           m = (m1 + m2)/2
@@ -126,11 +103,12 @@
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
-        
+
           WRITE(10, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
           WRITE(10, '(7(A, F20.10))') &
          & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, " gam0: ", gam0, &
          & " m1: ", m1, " m2: ", m2
+          WRITE(10, '(A,A)') " kernel_type: ", kernel_type
           WRITE(10, *) "-----Splines Vetorial Massas Diferentes------------------------"
 
           WRITE(12, *) "-----Splines Vetorial Massas Diferentes------------------------"
@@ -138,7 +116,8 @@
           WRITE(12, '(7(A, F20.10))') &
          & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, " gam0: ", gam0, &
          & " m1: ", m1, " m2: ", m2
-          
+          WRITE(12, '(A,A)') " kernel_type: ", kernel_type
+
             iw = 14
             N_intervalZ = (NMZ-1)/2
             N_intervalG = (NMG-1)/2
@@ -155,13 +134,11 @@
 
         do ii = 1, NPARAM
             print*, ii
-      
+
           !Número de pontos de Gauss para integração em cada variável
           Nz = Nnz(ii)
           Ng = Nng (ii)
           Nv = Nnv (ii)
-
-          printou_termos = .FALSE.
 
       !------------------ Cabecalho de termos.dat: parametros ------------------
           WRITE(18,*) "========================================================"
@@ -178,6 +155,7 @@
           WRITE(18,'(A,F20.10)') " gam0  = ", gam0
           WRITE(18,'(A,F20.10)') " e     = ", e
           WRITE(18,'(A,F20.10)') " PI    = ", PI
+          WRITE(18,'(A,A)')      " kernel_type = ", kernel_type
           WRITE(18,*) "--- Numero de splines (malhas) ---"
           WRITE(18,'(A,I0)') " NMZ (splines em z)     = ", NMZ
           WRITE(18,'(A,I0)') " NMG (splines em gamma) = ", NMG
@@ -188,20 +166,9 @@
           WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
           WRITE(18,*) "--------------------------------------------------------"
 
-
-       !CALL legauss(-1.d0,0.97d0,Nmz/2,zv,DX,1.d-15)
-   ! CALL legauss(0.97d0,1.d0,Nmz/2,X,dX,1.d-15)
-
-       ! do i=nmz/2+1,nmz
-            !zv(i)=x(i-nmz/2)
-        !end do
-
-        !zv(1)=-0.9999999d0
-        !zv(nmz)=0.999999d0
-
         call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
-        call COLLOC(IW,2,N_intervalZ,X,XG)  
-        
+        call COLLOC(IW,2,N_intervalZ,X,XG)
+
         do i = 1, 2*N_intervalZ
           zv(i+1) = XG(i)
         end do
@@ -210,7 +177,7 @@
         zv(nmz)= 0.9999999d0
 
         call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
-        call COLLOC(IW,2,N_intervalG,Y,YG)  
+        call COLLOC(IW,2,N_intervalG,Y,YG)
 
         do i=1, 2*N_intervalG
            gv(i+1)=YG(i)
@@ -222,25 +189,176 @@
     !Preparação das Splines
         call SPLGR1 (zv,Nmz)
         call SPLGR2 (gv,Nmg)
-        
-        
-    !Montagem da Matriz
 
         !Pesos e absissas de Gauss-Legendre para cada variável
         CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
         CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
         CALL legauss(0.d0,1.d0,Nv,W,dW,1.d-15)
-           
-        
+
+    !Montagem das matrizes
+        CALL BUILD_ZMATRIX(zv, gv, NMZ, NMG, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
+                           X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
+                           ZMATRIX, XMATRIX, kernel_type, &
+                           DEBUG_TERMOS, i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+
+          !Condicionar a matriz
+            do i = 1, nma
+                xmatrix (i,i) = xmatrix (i,i) + e
+            end do
+
+        WRITE(*,'(A,I0,A)') " DGGEV com ", NTHREADS_MKL, " thread(s) MKL..."
+
+        TSTART_EIG = 0.d0
+!$      TSTART_EIG = OMP_GET_WTIME()
+
+        CALL DGGEV('N', 'V', NMA, ZMATRIX, NMA, XMATRIX, NMA, &
+                   ALPHAR, ALPHAI, BETA, VL, NMA, VR, NMA, &
+                   WORK, LWORK, INFO)
+
+!$      TEND_EIG = OMP_GET_WTIME()
+!$      WRITE(*,'(A,F12.3,A)') " Tempo do DGGEV                 = ", &
+!$                             TEND_EIG-TSTART_EIG, " s"
+
+        ! Verificação de erro
+        IF (INFO .NE. 0) THEN
+            PRINT *, 'ERRO NO DGGEV: INFO = ', INFO
+            STOP
+        ENDIF
+
+        ! O DGGEV retorna (ALPHAR + i*ALPHAI) e BETA.
+        ! O autovalor real é lambda = alpha / beta.
+        DO I = 1, NMA
+            IF (ABS(BETA(I)) .GT. 1.D-16) THEN
+                WR(I) = ALPHAR(I) / BETA(I)
+                WI(I) = ALPHAI(I) / BETA(I)
+            ELSE
+                ! Evita divisão por zero (autovalor infinito)
+                WR(I) = 1.D+16
+                WI(I) = 0.D0
+            ENDIF
+        END DO
+
+        WRITE(10, '(A,I0,A,I0,A,I0,A)') "autovalores_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
+        WRITE(12, '(A,I0,A,I0,A,I0,A)') "Numericamente_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
+
+	do I = 1, NMA
+            WRITE(10,'(I4,2X,F20.12,2X,F20.12)') i, wr(i), wi(i)
+   end do
+
+      WRITE(10, *) ""
+      Alfa = 1.0d0 / (wr(1) * 16.0d0 * PI)
+      WRITE(10, '(A, F20.10)') "Valor de Alfa: ", Alfa
+      WRITE(12, '(A, F20.10)') "Valor de Alfa: ", Alfa
+
+      WRITE(10, '(9999ES16.8)') (vr(J,1), J=1, NMA)
+
+      !Autovetores
+      !Contrução dos termos cij para dps fazer o sum cij * Spline
+      do j=1,Nmz
+        do i = 1, Nmg
+          c(i,j) = (vr(i + (j-1)*Nmg, 1))
+        enddo
+      enddo
+
+      !Printar Matriz
+      DO I = 1, NMG
+         WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
+      END DO
+
+      end do
+
+      DEALLOCATE(XMATRIX, ZMATRIX, c)
+      DEALLOCATE(ALPHAR, ALPHAI, BETA, WR, WI)
+      DEALLOCATE(VR, VL, WORK)
+
+      CLOSE(16)
+      CLOSE(18)
+      CLOSE(10)
+      CLOSE(12)
+      CLOSE(14)
+10     FORMAT(11E12.4)
+18     format(5e15.6)
+20     FORMAT(A70)
+
+       Close(2)
+    END PROGRAM SPLINE_VETORIAL
+
+
+! -----------------------------------------------------------------------
+! BUILD_ZMATRIX
+! Monta ZMATRIX (lado direito, kernel) e XMATRIX (lado esquerdo, norma).
+! A avaliacao do kernel fica nas funcoes KERNEL_*; para trocar a fisica
+! basta mexer nelas, sem tocar na estrutura dos lacos de quadratura.
+! -----------------------------------------------------------------------
+      SUBROUTINE BUILD_ZMATRIX(zv, gv, Nmz, Nmg, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
+                               X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
+                               ZMATRIX, XMATRIX, kernel_type, &
+                               DEBUG_TERMOS, i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+      USE OMP_LIB
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN) :: Nmz, Nmg, NMA, Nz, Ng, Nv
+      DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*)
+      DOUBLE PRECISION, INTENT(IN) :: m, m1, m2, mu, kappa, Mtot, PI
+      DOUBLE PRECISION, INTENT(IN) :: X(Nz), dX(Nz)
+      DOUBLE PRECISION, INTENT(IN) :: Y(Ng), dY(Ng)
+      DOUBLE PRECISION, INTENT(IN) :: W(Nv), dW(Nv)
+      DOUBLE PRECISION, INTENT(OUT) :: ZMATRIX(NMA,NMA), XMATRIX(NMA,NMA)
+      CHARACTER, INTENT(IN) :: kernel_type
+      LOGICAL, INTENT(IN) :: DEBUG_TERMOS
+      INTEGER, INTENT(IN) :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
+
+!===================== Bases de splines no ponto corrente ==============
+      DOUBLE PRECISION :: splz(Nmz), splg(Nmg)
+
+!===================== Variaveis do loop de montagem ===================
+      INTEGER :: i, j                               !Indices do ponto de colocacao (g_i, z_j)
+      INTEGER :: k, l                               !Indices das splines em gamma e z
+      INTEGER :: p, q, r                            !Indices de Gauss em gamma', z' e v
+      INTEGER :: index1, index2                     !Linha e coluna da matriz (achatamento 2D->1D)
+      DOUBLE PRECISION :: z, g                      !Ponto de colocacao corrente
+      DOUBLE PRECISION :: zq, dzq                   !Abscissa e peso em z'
+      DOUBLE PRECISION :: gp, dgp                   !Abscissa e peso em gamma'
+      DOUBLE PRECISION :: v, dv                     !Abscissa e peso em v
+      DOUBLE PRECISION :: D0                        !Denominador comum do kernel
+      DOUBLE PRECISION :: Du, Dd                    !Denominadores dos ramos z'>z e z'<z
+      DOUBLE PRECISION :: Co_ku                     !Termo C0 do numerador no ramo superior
+      DOUBLE PRECISION :: Co_kd                     !Termo C0 do numerador no ramo inferior
+      DOUBLE PRECISION :: peso                      !Produto splines * jacobianos * pesos
+      LOGICAL :: SING_U, SING_D                     !z=-1 (ramo Du) / z=+1 (ramo Dd): 0/0 removivel
+      DOUBLE PRECISION, PARAMETER :: TOL_SING = 1.D-10 !Tolerancia em torno de z=+-1
+      DOUBLE PRECISION :: contrib_escu, contrib_escd  !Contribuicoes escalares de cada ramo
+      DOUBLE PRECISION :: contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku
+      LOGICAL :: printou_termos
+
+!===================== Funcoes de kernel ===============================
+      DOUBLE PRECISION, EXTERNAL :: KERNEL_UPPER_ESC, KERNEL_LOWER_ESC
+      DOUBLE PRECISION, EXTERNAL :: KERNEL_UPPER_C0,  KERNEL_LOWER_C0
+      DOUBLE PRECISION, EXTERNAL :: KERNEL_UPPER_F1,  KERNEL_LOWER_F1
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU, DENOM_DD
+      DOUBLE PRECISION, EXTERNAL :: COEF_C0_U, COEF_C0_D
+
+!===================== Cronometragem OpenMP ============================
+      DOUBLE PRECISION :: TSTART, TEND
+      INTEGER :: NTHREADS
+
+!===================== Acompanhamento do progresso =====================
+      INTEGER :: NFEITOS                            !Pares (i,j) ja concluidos (COMPARTILHADO)
+      INTEGER :: NFEITOS_LOC                        !Copia local do contador (PRIVATE)
+      INTEGER :: NTOTAL                             !Total de pares = Nmg*Nmz
+      INTEGER :: NPASSO                             !Imprime a cada NPASSO pares concluidos
+      DOUBLE PRECISION :: TAGORA, TDECOR, TRESTA    !Tempos para a estimativa
+      DOUBLE PRECISION :: PCT                       !Percentual concluido
+
         zmatrix  = 0.d0
         xmatrix  = 0.d0
+        printou_termos = .FALSE.
 
         NTHREADS = 1
 !$      NTHREADS = OMP_GET_MAX_THREADS()
 
-        WRITE(*,'(A,I0,A,I0,A)') " Montagem das matrizes com ", NTHREADS, &
-                                  " thread(s) OpenMP (MKL_NUM_THREADS=", &
-                                  NTHREADS_MKL, ")..."
+        WRITE(*,'(A,I0,A)') " Montagem das matrizes com ", NTHREADS, &
+                             " thread(s) OpenMP..."
         TSTART = 0.d0
 !$      TSTART = OMP_GET_WTIME()
 
@@ -267,9 +385,9 @@
 !=======================================================================
 !$OMP PARALLEL DO DEFAULT(SHARED) &
 !$OMP   PRIVATE(i, j, k, l, p, q, r, index1, index2, &
-!$OMP           g, z, gp, dgp, v, dv, zq, dzq, &
+!$OMP           g, z, gp, dgp, v, dv, zq, dzq, peso, &
 !$OMP           SPLz, SPLg, &
-!$OMP           D0, Du, Dd, f1_ku, Co_ku, Co_kd, SING_U, SING_D, &
+!$OMP           D0, Du, Dd, Co_ku, Co_kd, SING_U, SING_D, &
 !$OMP           contrib_escu, contrib_escd, &
 !$OMP           contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku, &
 !$OMP           NFEITOS_LOC, TAGORA, TDECOR, TRESTA, PCT) &
@@ -292,13 +410,12 @@
               do k=1,Nmg
                 do l=1, Nmz
                     index2 = (l-1)*Nmg + k    !Juntei cada Iteração das Splines Sg e Sz da integração em um vetor coluna de dimenção Nmg*Nmz
-                    !print*, index2
-                    
+
                     do p=1, Ng
                         do q=1, Nz
                             do r=1, Nv
     !Lado Direito
-                
+
         ! v variando de 0 a 1
                     v = W(r)
                     dV = DW (r)
@@ -306,58 +423,40 @@
                     gp = Y(p)
                     dgp = dY(p)
 
-                    !gp = 3*(1.d0+Y(p))/(1.d0-Y(p))
-                    !dgp = 3*(2.d0/((1.d0-Y(p))**2))*dY(p)
-
         ! theta z’ variando de z até 1
                      dzq=(1.d0-z)*dX(q)
                      zq=(1.d0-z)*X(q)+z
-                     
-                     call SPLMD1 (zv,Nmz,zq,SPLz) 
+
+                     call SPLMD1 (zv,Nmz,zq,SPLz)
                      call SPLMD2 (gv,Nmg,gp,SPLg)
-                     
-        !Termos do Kernel
-                      D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
 
-                      !IF (.NOT. SING_U) THEN
-                      Du = 0.25d0 * ( &
-                            Mtot**2 * (-v) * (z + 1.0d0) * (zq + 1.0d0) * ((v - 1.0d0) * z - v * zq + 1.0d0) &
-                            + v * ( m1**2 * (z + 1.0d0) + 2.0d0 * m1 * m2 * (z + 1.0d0) + &
-                                    m2**2 * (4.0d0 * v * z - 4.0d0 * v * zq - 3.0d0 * z + 4.0d0 * zq + 1.0d0) - &
-                                    4.0d0 * g * (v - 1.0d0) * (zq + 1.0d0) + 4.0d0 * gp * (z + 1.0d0) ) &
-                            - 4.0d0 * mu**2 * (v - 1.0d0) * (z + 1.0d0) )
+        !Peso comum a todas as contribuicoes (splines + jacobianos + pesos de Gauss)
+                     peso = splg(k)*splz(l)*dzq*dgp*dv
 
-                       !f1_ku = 0.25d0*(z + 1.d0)*(Mtot**2*v*(z + 1.d0)*(zq + 1.d0)*((v - 1.d0)*z - v*zq + 1.d0) &
-                                 !- v*(m1**2*(z + 1.d0) + 2.d0*m1*m2*(z + 1.d0) + m2**2*(4.d0*v*z - 4.d0*v*zq &
-                                 !- 3.d0*z + 4.d0*zq + 1.d0) - 4.d0*g*(v - 1.d0)*(zq + 1.d0) + 4.d0*gp*(z + 1.d0)) &
-                                 !+ 4.d0*mu**2*(v - 1.d0)*(z + 1.d0))
-
-                        Co_ku = (-1.d0)*0.25d0*(z + 1.d0)*(Mtot**2*(z + 1.d0)*((v*zq + v - 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
-                                 + 4.d0*(v - 2.d0)*(m2**2*(-v*z + v*zq + 2.d0*z) + g*(v*zq + v - 2.d0)))
-
-                      ! Numerador = Co_ku - 2*f1_ku
-                       !Numerador = (1.d0+z)**2
-
-                        contrib_escu = 1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * &
-                        ((1.d0 + z)**2)*splg(k)*splz(l)*dzq*dgp*dv
-
-                        contrib_C0_ku = 1.d0 /&
-                         (32*PI**2*D0) * (v**2 / (Du**2)) * &
-                         Co_ku * splg(k)*splz(l)*dzq*dgp*dv
-
-                        contrib_f1_ku = 2.d0 /&
-                        (32*PI**2*D0) * (v**2 / (Du)) * &
-                        (z+1)* splg(k)*splz(l)*dzq*dgp*dv
-
-                        !zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_ku - contrib_f1_ku
-                        zmatrix (index1, index2) = zmatrix (index1, index2)+ contrib_escu
-                      !END IF !.NOT. SING_U
+        !----------------- Ramo superior: avaliacao do kernel -----------------
+                     IF (kernel_type .EQ. 'v') THEN
+                        contrib_C0_ku = KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_f1_ku = KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_escu  = 0.d0
+                        zmatrix (index1, index2) = zmatrix (index1, index2) &
+                                                   - contrib_C0_ku + contrib_f1_ku
+                     ELSE
+                        contrib_escu  = KERNEL_UPPER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_C0_ku = 0.d0
+                        contrib_f1_ku = 0.d0
+                        zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escu
+                     END IF
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
                     IF (DEBUG_TERMOS .AND. .NOT. SING_U .AND. .NOT. printou_termos &
                         .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
                         .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
                         .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
+                      !Denominadores e coeficientes so sao recalculados aqui,
+                      !fora do caminho quente, para o relatorio de diagnostico.
+                      D0    = DENOM_D0(z, g, m1, m2, Mtot)
+                      Du    = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+                      Co_ku = COEF_C0_U(z, zq, g, v, m2, Mtot)
 !$OMP CRITICAL (TERMOS_DBG)
                       WRITE(18,*) ""
                       WRITE(18,*) "=== PONTO DO DOMINIO (indices) ==="
@@ -377,81 +476,55 @@
                       WRITE(18,'(A,ES24.15)') " dzq     = ", dzq
                       WRITE(18,'(A,ES24.15)') " D0      = ", D0
                       WRITE(18,'(A,ES24.15)') " Du      = ", Du
-                      WRITE(18,'(A,ES24.15)') " f1_ku   = ", f1_ku
                       WRITE(18,'(A,ES24.15)') " Co_ku   = ", Co_ku
-                      WRITE(18,'(A,ES24.15)') " Numerador (Co_ku + 2*f1_ku) = ", Co_ku + 2*f1_ku
                       WRITE(18,'(A,ES24.15)') " splg(k) = ", splg(k)
                       WRITE(18,'(A,ES24.15)') " splz(l) = ", splz(l)
                       WRITE(18,'(A,ES24.15)') " (1+z)**2                = ", (1+z)**2
                       WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
                       WRITE(18,'(A,ES24.15)') " v**2/Du**2              = ", v**2/(Du**2)
-                      WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_escu
+                      WRITE(18,'(A,ES24.15)') " contribuicao escalar    = ", contrib_escu
                       WRITE(18,*) ""
                       WRITE(18,*) "--- contrib_C0_ku e contrib_f1_ku (ramo superior) ---"
                       WRITE(18,'(A,ES24.15)') " contrib_C0_ku (com splines/jacob.)    = ", contrib_C0_ku
                       WRITE(18,'(A,ES24.15)') " contrib_C0_ku (sem splines/jacob.)    = ", &
-                          1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * Co_ku
+                          KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
                       WRITE(18,'(A,ES24.15)') " contrib_f1_ku (com splines/jacob.)    = ", contrib_f1_ku
                       WRITE(18,'(A,ES24.15)') " contrib_f1_ku (sem splines/jacob.)    = ", &
-                          2.d0 / (32*PI**2*D0) * (v**2 / (Du)) * (z+1)
+                          KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
                       WRITE(18,'(A,ES24.15)') " soma contrib_C0_ku + contrib_f1_ku    = ", &
                           contrib_C0_ku + contrib_f1_ku
 !$OMP END CRITICAL (TERMOS_DBG)
                     END IF
-
-                         !TesteLog =  zmatrix (index1, index2)
-                          !if (isnan(TesteLog)) then
-                                !write(14,*) 'AVISO: NaN! i=', i, 'j=', j, 'k=', k, 'l=', l, 'p=', p, 'q=', q
-                                !write(14,*) '  g =', g, '  gp =', gp, '  z =', z, '  zq =', zq
-                                !print*,"a"
-                            !end if
 
         ! theta z’ variando de -1 até z
                      dzq=(z+1.d0)*dx(q)
                      zq=(z+1.d0)*x(q)-1.d0
                      call SPLMD1 (zv,Nmz,zq,SPLz)
 
-        !Termos do Kernel
+                     peso = splg(k)*splz(l)*dzq*dgp*dv
 
-                        D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
-
-                        !IF (.NOT. SING_D) THEN
-                        Dd = 0.25d0 * ( &
-                            Mtot**2 * v * (z - 1.0d0) * (zq - 1.0d0) * ((v - 1.0d0) * z - v * zq - 1.0d0) &
-                            + v * ( m1**2 * (-4.0d0 * v * z + 4.0d0 * (v - 1.0d0) * zq + 3.0d0 * z + 1.0d0) &
-                                    - 2.0d0 * m1 * m2 * (z - 1.0d0) - m2**2 * z + m2**2 &
-                                    + 4.0d0 * (gp + g * (v - 1.0d0) * (zq - 1.0d0)) - 4.0d0 * gp * z ) &
-                            + 4.0d0 * mu**2 * (v - 1.0d0) * (z - 1.0d0) )
-
-                        !f1_kd = 0.25d0*(z - 1.d0)*(Mtot**2*v*(z - 1.d0)*(zq - 1.d0)*((v - 1.d0)*z - v*zq - 1.d0) &
-                                 !+ v*(m1**2*(-4.d0*v*z + 4.d0*(v - 1.d0)*zq + 3.d0*z + 1.d0) - 2.d0*m1*m2*(z - 1.d0) &
-                                 !- m2**2*z + m2**2 + 4.d0*(gp + g*(v - 1.d0)*(zq - 1.d0)) - 4.d0*gp*z) &
-                                 !+ 4.d0*mu**2*(v - 1.d0)*(z - 1.d0))
-
-                        Co_kd =(-1.d0)*0.25d0*(z - 1.d0)*(Mtot**2*(z - 1.d0)*((v*(zq - 1.d0) + 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
-                             + 4.d0*(v - 2.d0)*(m1**2*(-v*z + v*zq + 2.d0*z) + g*(v*(zq - 1.d0) + 2.d0)))
-
-                         !Numerador = Co_kd - 2*f1_kd
-                         !Numerador = (1.d0-z)**2
-
-                        contrib_escd = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
-                        ((1.d0 - z)**2)*splg(k)*splz(l)*dzq*dgp*dv
-
-                        contrib_C0_kd = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * &
-                        Co_kd* splg(k)*splz(l)*dzq*dgp*dv
-
-                        contrib_f1_kd = 2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * &
-                        (1.d0-z) * splg(k)*splz(l)*dzq*dgp*dv
-
-                        !zmatrix (index1, index2) = zmatrix (index1, index2) - contrib_C0_kd - contrib_f1_kd
+        !----------------- Ramo inferior: avaliacao do kernel -----------------
+                     IF (kernel_type .EQ. 'v') THEN
+                        contrib_C0_kd = KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_f1_kd = KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_escd  = 0.d0
+                        zmatrix (index1, index2) = zmatrix (index1, index2) &
+                                                   - contrib_C0_kd + contrib_f1_kd
+                     ELSE
+                        contrib_escd  = KERNEL_LOWER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_C0_kd = 0.d0
+                        contrib_f1_kd = 0.d0
                         zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escd
-                        !END IF !.NOT. SING_D
+                     END IF
 
       !------- Impressao dos termos para o ponto escolhido do dominio -------
                     IF (DEBUG_TERMOS .AND. .NOT. SING_D .AND. .NOT. printou_termos &
                         .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
                         .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
                         .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
+                      D0    = DENOM_D0(z, g, m1, m2, Mtot)
+                      Dd    = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+                      Co_kd = COEF_C0_D(z, zq, g, v, m1, Mtot)
 !$OMP CRITICAL (TERMOS_DBG)
                       WRITE(18,*) ""
                       WRITE(18,*) "=== RAMO INFERIOR: z' de -1 ate z ==="
@@ -460,21 +533,20 @@
                       WRITE(18,'(A,ES24.15)') " D0      = ", D0
                       WRITE(18,'(A,ES24.15)') " Dd      = ", Dd
                       WRITE(18,'(A,ES24.15)') " Co_kd   = ", Co_kd
-                      WRITE(18,'(A,ES24.15)') " Numerador (Co_kd)           = ", Co_kd
                       WRITE(18,'(A,ES24.15)') " splg(k) = ", splg(k)
                       WRITE(18,'(A,ES24.15)') " splz(l) = ", splz(l)
                       WRITE(18,'(A,ES24.15)') " (1-z)**2                = ", (1-z)**2
                       WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
                       WRITE(18,'(A,ES24.15)') " v**2/Dd**2              = ", v**2/(Dd**2)
-                      WRITE(18,'(A,ES24.15)') " contribuicao a zmatrix  = ", contrib_escd
+                      WRITE(18,'(A,ES24.15)') " contribuicao escalar    = ", contrib_escd
                       WRITE(18,*) ""
                       WRITE(18,*) "--- contrib_C0_kd e contrib_f1_kd (ramo inferior) ---"
                       WRITE(18,'(A,ES24.15)') " contrib_C0_kd (com splines/jacob.)    = ", contrib_C0_kd
                       WRITE(18,'(A,ES24.15)') " contrib_C0_kd (sem splines/jacob.)    = ", &
-                          1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * Co_kd
+                          KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
                       WRITE(18,'(A,ES24.15)') " contrib_f1_kd (com splines/jacob.)    = ", contrib_f1_kd
                       WRITE(18,'(A,ES24.15)') " contrib_f1_kd (sem splines/jacob.)    = ", &
-                          2.d0 / (32*PI**2*D0) * (v**2 / (Dd)) * (1.d0-z)
+                          KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
                       WRITE(18,'(A,ES24.15)') " soma contrib_C0_kd + contrib_f1_kd    = ", &
                           contrib_C0_kd + contrib_f1_kd
                       WRITE(18,*) ""
@@ -547,95 +619,209 @@
     end do
 !$OMP END PARALLEL DO
 
+        TEND = 0.d0
 !$      TEND = OMP_GET_WTIME()
 !$      WRITE(*,'(A,F12.3,A)') " Tempo de montagem das matrizes = ", &
 !$                             TEND-TSTART, " s"
 
-          !Condicionar a matriz
-            do i = 1, nma
-                xmatrix (i,i) = xmatrix (i,i) + e
-            end do
+      END SUBROUTINE BUILD_ZMATRIX
 
-                    
 
-        WRITE(*,'(A,I0,A)') " DGGEV com ", NTHREADS_MKL, " thread(s) MKL..."
+! =======================================================================
+!                    DENOMINADORES COMUNS DO KERNEL
+! =======================================================================
 
-        TSTART_EIG = 0.d0
-!$      TSTART_EIG = OMP_GET_WTIME()
+! -----------------------------------------------------------------------
+! D0 — denominador comum aos dois ramos (funcao apenas de z e gamma)
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION DENOM_D0(z, g, m1, m2, Mtot)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, g, m1, m2, Mtot
 
-        CALL DGGEV('N', 'V', NMA, ZMATRIX, NMA, XMATRIX, NMA, &
-                   ALPHAR, ALPHAI, BETA, VL, NMA, VR, NMA, &
-                   WORK, LWORK, INFO)
+      DENOM_D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) &
+                 + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
+      END FUNCTION DENOM_D0
 
-!$      TEND_EIG = OMP_GET_WTIME()
-!$      WRITE(*,'(A,F12.3,A)') " Tempo do DGGEV                 = ", &
-!$                             TEND_EIG-TSTART_EIG, " s"
 
-        ! Verificação de erro
-        IF (INFO .NE. 0) THEN
-            PRINT *, 'ERRO NO DGGEV: INFO = ', INFO
-            STOP
-        ENDIF
+! -----------------------------------------------------------------------
+! Du — denominador do ramo superior (z' em [z, 1])
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot
 
-        ! O DGGEV retorna (ALPHAR + i*ALPHAI) e BETA.
-        ! O autovalor real é lambda = alpha / beta.
-        DO I = 1, NMA
-            IF (ABS(BETA(I)) .GT. 1.D-16) THEN
-                WR(I) = ALPHAR(I) / BETA(I)
-                WI(I) = ALPHAI(I) / BETA(I)
-            ELSE
-                ! Evita divisão por zero (autovalor infinito)
-                WR(I) = 1.D+16 
-                WI(I) = 0.D0
-            ENDIF
-        END DO
-      
-        WRITE(10, '(A,I0,A,I0,A,I0,A)') "autovalores_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
-        WRITE(12, '(A,I0,A,I0,A,I0,A)') "Numericamente_Nz",nz,"_Ng",ng,"_Nv",nv,".dat"
-          
-	do I = 1, NMA
-            WRITE(10,'(I4,2X,F20.12,2X,F20.12)') i, wr(i), wi(i)
-   end do
-      
-      WRITE(10, *) ""
-      Alfa = 1.0d0 / (wr(1) * 16.0d0 * PI)
-      WRITE(10, '(A, F20.10)') "Valor de Alfa: ", Alfa
-      WRITE(12, '(A, F20.10)') "Valor de Alfa: ", Alfa
+      DENOM_DU = 0.25d0 * ( &
+            Mtot**2 * (-v) * (z + 1.0d0) * (zq + 1.0d0) * ((v - 1.0d0) * z - v * zq + 1.0d0) &
+            + v * ( m1**2 * (z + 1.0d0) + 2.0d0 * m1 * m2 * (z + 1.0d0) + &
+                    m2**2 * (4.0d0 * v * z - 4.0d0 * v * zq - 3.0d0 * z + 4.0d0 * zq + 1.0d0) - &
+                    4.0d0 * g * (v - 1.0d0) * (zq + 1.0d0) + 4.0d0 * gp * (z + 1.0d0) ) &
+            - 4.0d0 * mu**2 * (v - 1.0d0) * (z + 1.0d0) )
+      END FUNCTION DENOM_DU
 
-      WRITE(10, '(9999ES16.8)') (vr(J,1), J=1, NMA)
 
-      !Autovetores
-      !Contrução dos termos cij para dps fazer o sum cij * Spline
-      do j=1,Nmz
-        do i = 1, Nmg
-          c(i,j) = (vr(i + (j-1)*Nmg, 1))
-        enddo
-      enddo
-      
-      !Printar Matriz
-      DO I = 1, NMG
-         WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
-      END DO
-     
-      end do
+! -----------------------------------------------------------------------
+! Dd — denominador do ramo inferior (z' em [-1, z])
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot
 
-      DEALLOCATE(XMATRIX, ZMATRIX, c)
-      DEALLOCATE(ALPHAR, ALPHAI, BETA, WR, WI)
-      DEALLOCATE(VR, VL, WORK)
+      DENOM_DD = 0.25d0 * ( &
+          Mtot**2 * v * (z - 1.0d0) * (zq - 1.0d0) * ((v - 1.0d0) * z - v * zq - 1.0d0) &
+          + v * ( m1**2 * (-4.0d0 * v * z + 4.0d0 * (v - 1.0d0) * zq + 3.0d0 * z + 1.0d0) &
+                  - 2.0d0 * m1 * m2 * (z - 1.0d0) - m2**2 * z + m2**2 &
+                  + 4.0d0 * (gp + g * (v - 1.0d0) * (zq - 1.0d0)) - 4.0d0 * gp * z ) &
+          + 4.0d0 * mu**2 * (v - 1.0d0) * (z - 1.0d0) )
+      END FUNCTION DENOM_DD
 
-      CLOSE(16)
-      CLOSE(18)
-      CLOSE(10)
-      CLOSE(12)
-      CLOSE(14)
-10     FORMAT(11E12.4)
-18     format(5e15.6)
-20     FORMAT(A70)
 
-       
+! =======================================================================
+!                    COEFICIENTES VETORIAIS C0
+! =======================================================================
 
-       Close(2)
-    END
+! -----------------------------------------------------------------------
+! C0 do ramo superior
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION COEF_C0_U(z, zq, g, v, m2, Mtot)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, v, m2, Mtot
+
+      !COEF_C0_U = (-1.d0)*0.25d0*(z + 1.d0) &
+          !*(Mtot**2*(z + 1.d0)*((v*zq + v - 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
+            !+ 4.d0*(v - 2.d0)*(m2**2*(-v*z + v*zq + 2.d0*z) + g*(v*zq + v - 2.d0)))
+
+      COEF_C0_U = (-2 + v)*(1 + z)*(m2**2*((-2 + v)*z - v*zq) - g*(-2 + v + v*zq)) - & 
+                    (Mtot**2*(1 + z)**2*(4 + ((-2 + v)*z - v*zq)*(-2 + v + v*zq)))/4.
+      END FUNCTION COEF_C0_U
+
+
+! -----------------------------------------------------------------------
+! C0 do ramo inferior
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION COEF_C0_D(z, zq, g, v, m1, Mtot)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, v, m1, Mtot
+
+     ! COEF_C0_D = (-1.d0)*0.25d0*(z - 1.d0) &
+         ! *(Mtot**2*(z - 1.d0)*((v*(zq - 1.d0) + 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
+           ! + 4.d0*(v - 2.d0)*(m1**2*(-v*z + v*zq + 2.d0*z) + g*(v*(zq - 1.d0) + 2.d0)))
+
+      COEF_C0_D = (-2 + v)*(-1 + z)*(g*(-2 + v - v*zq) + m1**2*((-2 + v)*z - v*zq)) - &
+            (Mtot**2*(-1 + z)**2*(4 + (2 + v*(-1 + zq))*((-2 + v)*z - v*zq)))/4.
+      END FUNCTION COEF_C0_D
+
+
+! =======================================================================
+!                        KERNEL ESCALAR
+! Numerador (1 +- z)**2; nao ha termo f1. Mesma estrutura dos kernels
+! vetoriais, de modo que o builder trate os dois casos igualmente.
+! =======================================================================
+
+! -----------------------------------------------------------------------
+! KERNEL_UPPER_ESC — integrando escalar para z' em [z, 1]
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION KERNEL_UPPER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
+      DOUBLE PRECISION :: D0, Du
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU
+
+      D0 = DENOM_D0(z, g, m1, m2, Mtot)
+      Du = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+
+      KERNEL_UPPER_ESC = 1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * (1.d0 + z)**2
+      END FUNCTION KERNEL_UPPER_ESC
+
+
+! -----------------------------------------------------------------------
+! KERNEL_LOWER_ESC — integrando escalar para z' em [-1, z]
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION KERNEL_LOWER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
+      DOUBLE PRECISION :: D0, Dd
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DD
+
+      D0 = DENOM_D0(z, g, m1, m2, Mtot)
+      Dd = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+
+      KERNEL_LOWER_ESC = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * (1.d0 - z)**2
+      END FUNCTION KERNEL_LOWER_ESC
+
+
+! =======================================================================
+!                        KERNEL VETORIAL
+! O numerador se separa em duas partes, tratadas por funcoes distintas:
+!   C0 -> pesa 1/Du**2 (ou 1/Dd**2)
+!   f1 -> pesa 1/Du    (ou 1/Dd),  com fator 2
+! O builder soma -(C0 + f1) a zmatrix.
+! =======================================================================
+
+! -----------------------------------------------------------------------
+! KERNEL_UPPER_C0 — parte C0 do kernel vetorial, z' em [z, 1]
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
+      DOUBLE PRECISION :: D0, Du, Co_ku
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU, COEF_C0_U
+
+      D0    = DENOM_D0(z, g, m1, m2, Mtot)
+      Du    = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+      Co_ku = COEF_C0_U(z, zq, g, v, m2, Mtot)
+
+      KERNEL_UPPER_C0 = 1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * Co_ku
+      END FUNCTION KERNEL_UPPER_C0
+
+
+! -----------------------------------------------------------------------
+! KERNEL_UPPER_F1 — parte f1 do kernel vetorial, z' em [z, 1]
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
+      DOUBLE PRECISION :: D0, Du
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU
+
+      D0 = DENOM_D0(z, g, m1, m2, Mtot)
+      Du = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+
+      KERNEL_UPPER_F1 = 2.d0 / (32*PI**2*D0) * (v**2 / Du) * (z + 1.d0)
+      END FUNCTION KERNEL_UPPER_F1
+
+
+! -----------------------------------------------------------------------
+! KERNEL_LOWER_C0 — parte C0 do kernel vetorial, z' em [-1, z]
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
+      DOUBLE PRECISION :: D0, Dd, Co_kd
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DD, COEF_C0_D
+
+      D0    = DENOM_D0(z, g, m1, m2, Mtot)
+      Dd    = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+      Co_kd = COEF_C0_D(z, zq, g, v, m1, Mtot)
+
+      KERNEL_LOWER_C0 = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * Co_kd
+      END FUNCTION KERNEL_LOWER_C0
+
+
+! -----------------------------------------------------------------------
+! KERNEL_LOWER_F1 — parte f1 do kernel vetorial, z' em [-1, z]
+! -----------------------------------------------------------------------
+      DOUBLE PRECISION FUNCTION KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
+      DOUBLE PRECISION :: D0, Dd
+      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DD
+
+      D0 = DENOM_D0(z, g, m1, m2, Mtot)
+      Dd = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+
+      KERNEL_LOWER_F1 = 2.d0 / (32*PI**2*D0) * (v**2 / Dd) * (1.d0 - z)
+      END FUNCTION KERNEL_LOWER_F1
+
     
     
     
