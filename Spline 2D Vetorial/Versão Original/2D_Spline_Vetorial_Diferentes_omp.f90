@@ -95,11 +95,11 @@
 
      !Parâmetros
           !Massas
-          Mtot = 3.2d0
+          Mtot = 1.90d0
           m1 = 1.0d0
-          m2 = 2.3d0
+          m2 = 1.0d0
           m = (m1 + m2)/2
-          mu = 1.8d0
+          mu = 2.0d0
           kappa = sqrt(m**2 - 0.25*Mtot**2)
 
           gam0 = 10.0d0
@@ -166,7 +166,7 @@
           WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
           WRITE(18,*) "--------------------------------------------------------"
 
-        call G1D(IW,-1.d0, N_intervalZ, 1.0d0, 1.d0, X)
+        call G1D(IW,-1.d0, N_intervalZ, 0.8d0, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)
 
         do i = 1, 2*N_intervalZ
@@ -191,7 +191,11 @@
         call SPLGR2 (gv,Nmg)
 
         !Pesos e absissas de Gauss-Legendre para cada variável
+        !X(q) e a variavel NORMALIZADA em [0,1]; o z' fisico em [-1,1] e obtido
+        !pelos mapeamentos afins de cada ramo (ver BUILD_ZMATRIX).
         CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
+
+
         CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
         CALL legauss(0.d0,1.d0,Nv,W,dW,1.d-15)
 
