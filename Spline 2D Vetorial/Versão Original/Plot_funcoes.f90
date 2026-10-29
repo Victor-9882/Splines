@@ -18,11 +18,9 @@
     ! DIMENSOES DO PROBLEMA
     !   NMZ/NMG : numero de splines em z e em gamma
     !   NMA     : dimensao total do produto tensorial (NMG*NMZ)
-    !   NPARAM  : quantos pares (Nng,Nnz) serao lidos de inputs.dat
     ! -----------------------------------------------------------------
-    INTEGER :: NMG, NMZ, NMA, NPARAM
+    INTEGER :: NMG, NMZ, NMA
     INTEGER :: N_intervalZ, N_intervalG
-    INTEGER :: Nnz(100), Nng(100)
 
     ! -----------------------------------------------------------------
     ! MALHAS E BASES DE SPLINE
@@ -61,12 +59,11 @@
     ! -----------------------------------------------------------------
     ! CONTADORES DE LOOP
     !   i, j       : indices das bases splg(i)/splz(j)
-    !   ii         : varre os pares (Nng,Nnz) de inputs.dat
     !   p          : quadratura interna em gamma'
     !   q, r       : quadraturas externas em gamma e em xi
     !   k_plot, p_plot : indices das varreduras dos plots
     ! -----------------------------------------------------------------
-    INTEGER :: i, j, ii, p, q, r, k_plot, p_plot
+    INTEGER :: i, j, p, q, r, k_plot, p_plot
 
     ! -----------------------------------------------------------------
     ! ACUMULADORES E VARIAVEIS DE TRABALHO
@@ -88,88 +85,161 @@
     DOUBLE PRECISION :: gamma_ext, dgamma_ext, xi_ext, dxi_ext, z_ext
     DOUBLE PRECISION :: Norma, dist_long, dist_trans
 
+    ! -----------------------------------------------------------------
+    ! ENTRADA (NAMELIST)
+    !   Uso:  ./plot            -> le &saida e &plot de ./inputs.dat
+    !         ./plot <pasta>    -> le &plot de <pasta>/inputs.dat
+    !   Os testes vem de <pasta>/resumo.dat, e os parametros de cada um
+    !   de <pasta>/<nome>_parametros.dat (gravado pelo programa principal),
+    !   garantindo a mesma malha usada no calculo dos coeficientes.
+    ! -----------------------------------------------------------------
+    CHARACTER(LEN=40)  :: nome
+    CHARACTER(LEN=200) :: pasta
+    CHARACTER          :: kernel_type
+    DOUBLE PRECISION   :: mu, e, A_z, A_g, gamma_max, z_borda
+    LOGICAL            :: DEBUG_TERMOS
+    INTEGER            :: Nz_plot, Ng_plot, Nv_plot
+    DOUBLE PRECISION   :: xi_num, xi_den
+    NAMELIST /saida/ pasta
+    NAMELIST /teste/ nome, kernel_type, NMG, NMZ, Nz, Ng, Nv, &
+                     Mtot, m1, m2, mu, e, A_z, A_g, gamma_max, z_borda, &
+                     DEBUG_TERMOS
+    NAMELIST /plot/ Nz_plot, Ng_plot, Nv_plot, z_fixo, gamma_fixo, &
+                    gamma_den, xi_den, xi_num, gamma_num
 
-    open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
-    open (unit = 11, file = "autovetoresG.dat",STATUS="UNKNOWN")
-    open (unit = 15, file = "autovetoresZ.dat",STATUS="UNKNOWN")
-    open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
-    open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
-    open (unit = 13, file = "plotalfa.dat",STATUS="UNKNOWN")
-    open (unit = 14, file = 'erros.dat', status='unknown')
-    open (UNIT = 20, FILE = "inputs_plot.dat", STATUS="UNKNOWN")
+    CHARACTER(LEN=256) :: arq_entrada, prefixo, linha, msg_io
+    INTEGER            :: ios, NFEITOS
+
+    ! Linhas de resumo.dat, regravadas no fim com a coluna Norma preenchida
+    ! (ultimos 24 caracteres de cada linha de teste, largura total LARG_RESUMO)
+    INTEGER, PARAMETER :: NMAX_LINHAS = 2000, LARG_RESUMO = 230
+    CHARACTER(LEN=256) :: linhas(NMAX_LINHAS)
+    INTEGER            :: nlinhas
+
 
     PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
-        !Parâmetros
-        !Massas
-        Mtot = 2.3d0
-        m1 = 1.0d0
-        m2 = 2.3d0
-        m = (m1+m2)/2
-        kappa = sqrt(m**2 - 0.25*Mtot**2)
+    ! -----------------------------------------------------------------
+    ! Pasta da rodada e parametros dos plots
+    ! -----------------------------------------------------------------
+    CALL GET_COMMAND_ARGUMENT(1, pasta)
+    IF (LEN_TRIM(pasta) .EQ. 0) THEN
+        arq_entrada = 'inputs.dat'
+        OPEN(UNIT=20, FILE=arq_entrada, STATUS='OLD', ACTION='READ', IOSTAT=ios)
+        IF (ios .NE. 0) STOP 'ERRO: inputs.dat nao encontrado (ou passe a pasta como argumento)'
+        READ(20, NML=saida, IOSTAT=ios)
+        IF (ios .NE. 0) STOP 'ERRO: bloco &saida ausente em inputs.dat'
+        CLOSE(20)
+    ELSE
+        arq_entrada = TRIM(pasta)//'/inputs.dat'
+    END IF
 
-        Nz = 60
-        Ng = 60
-        Nv = 60
+    Nz_plot = -1;  Ng_plot = -1;  Nv_plot = -1
+    OPEN(UNIT=20, FILE=TRIM(arq_entrada), STATUS='OLD', ACTION='READ', IOSTAT=ios)
+    IF (ios .NE. 0) THEN
+        PRINT *, 'ERRO: nao foi possivel abrir ', TRIM(arq_entrada)
+        STOP 1
+    END IF
+    READ(20, NML=plot, IOSTAT=ios, IOMSG=msg_io)
+    CLOSE(20)
+    IF (ios .NE. 0 .OR. Nz_plot .LT. 1 .OR. Ng_plot .LT. 1 .OR. Nv_plot .LT. 1) THEN
+        PRINT *, 'ERRO: bloco &plot ausente ou incompleto em ', TRIM(arq_entrada)
+        IF (ios .GT. 0) PRINT *, TRIM(msg_io)
+        STOP 1
+    END IF
 
-        READ(20,*) NPARAM
-        DO I = 1, NPARAM
-            READ(20,*) Nng(i), Nnz(i)
-        END DO
+    ! Registra os parametros de plot usados nesta execucao
+    OPEN(UNIT=19, FILE=TRIM(pasta)//'/plot_parametros.dat', STATUS='REPLACE')
+    WRITE(19,'(A,A)') '! Lido de ', TRIM(arq_entrada)
+    WRITE(19, NML=plot)
+    CLOSE(19)
+
+    iw = 0      ! sem diagnostico de malha (o programa principal ja grava <nome>_erros.dat)
+
+    ! -----------------------------------------------------------------
+    ! Um teste por linha de resumo.dat (linhas com # sao ignoradas)
+    ! -----------------------------------------------------------------
+    OPEN(UNIT=25, FILE=TRIM(pasta)//'/resumo.dat', STATUS='OLD', ACTION='READ', IOSTAT=ios)
+    IF (ios .NE. 0) THEN
+        PRINT *, 'ERRO: ', TRIM(pasta), '/resumo.dat nao encontrado. Rode o programa principal antes.'
+        STOP 1
+    END IF
+
+    NFEITOS = 0
+    nlinhas = 0
+    do
+        READ(25, '(A)', IOSTAT=ios) linha
+        IF (ios .NE. 0) EXIT
+        IF (nlinhas .EQ. NMAX_LINHAS) STOP 'ERRO: resumo.dat maior que NMAX_LINHAS'
+        nlinhas = nlinhas + 1
+        linhas(nlinhas) = linha
+        IF (LEN_TRIM(linha) .EQ. 0) CYCLE
+        IF (linha(1:1) .EQ. '#') CYCLE
+        READ(linha, *) nome
+
+        ! Parametros exatos do teste (mesma malha do calculo)
+        prefixo = TRIM(pasta)//'/'//TRIM(nome)//'_'
+        OPEN(UNIT=20, FILE=TRIM(prefixo)//'parametros.dat', STATUS='OLD', ACTION='READ', IOSTAT=ios)
+        IF (ios .NE. 0) THEN
+            PRINT *, 'ERRO: nao foi possivel abrir ', TRIM(prefixo)//'parametros.dat'
+            STOP 1
+        END IF
+        READ(20, NML=teste)
         CLOSE(20)
 
+        WRITE(*,'(A,A)') ' Plot do teste ', TRIM(nome)
 
-    do ii = 1, NPARAM
-
-        NMG = Nng(ii)
-        NMZ = Nnz(ii)
-
+        m = (m1+m2)/2
+        kappa = sqrt(m**2 - 0.25*Mtot**2)
         NMA = NMG * NMZ
+
+        ! Quadraturas dos plots (independentes das do calculo)
+        Nz = Nz_plot
+        Ng = Ng_plot
+        Nv = Nv_plot
 
         !ALOCAR VARIÁVEIS
         ALLOCATE( zv(NMZ + 1), gv(NMG+1) )
         ALLOCATE( splz(NMZ), splg(NMG))
-        ALLOCATE( c(NMA, NMA) )
-        ALLOCATE( XG(NMA), YG(NMA) )
+        ALLOCATE( c(NMG, NMZ) )
+        ALLOCATE( XG(NMZ), YG(NMG) )
 
     ! Ler matriz de coeficientes
+      OPEN(UNIT=16, FILE=TRIM(prefixo)//'coeficientes.dat', STATUS='OLD', ACTION='READ')
       DO I = 1, NMG
          READ(16, *) (c(I,J), J=1, NMZ)
       END DO
-
-      ! 3. Feche o arquivo
       CLOSE(16)
 
-        iw = 14
         N_intervalZ = (NMZ-1)/2
         N_intervalG = (NMG-1)/2
 
-        !Contrução das malhas
-            
-            call G1D(IW,-1.d0, N_intervalZ, 1.d0, 1.d0, X)
-            call COLLOC(IW,2,N_intervalZ,X,XG)  
-            
+        !Contrução das malhas (identica a do programa principal)
+            call G1D(IW,-1.d0, N_intervalZ, A_z, 1.d0, X)
+            call COLLOC(IW,2,N_intervalZ,X,XG)
+
             do i = 1, 2*N_intervalZ
             zv(i+1) = XG(i)
             end do
 
-            zv(1)=-0.999999d0
-            zv(nmz)= 0.999999d0
+            zv(1)  = -z_borda
+            zv(nmz)=  z_borda
 
-
-            call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
-            call COLLOC(IW,2,N_intervalG,Y,YG)  
+            call G1D(IW,0.d0, N_intervalG, A_g, gamma_max, Y)
+            call COLLOC(IW,2,N_intervalG,Y,YG)
 
             do i=1, 2*N_intervalG
             gv(i+1)=YG(i)
             enddo
 
-            gv(1) = 0.0000001d0
-            gv(nmg) = 3.d0
-        
+            gv(1) = 0.d0
+            gv(nmg) = gamma_max
 
             call SPLGR1 (zv,Nmz)
             call SPLGR2 (gv,Nmg)
+
+        open (unit = 11, file = TRIM(prefixo)//"autovetoresG.dat", STATUS="REPLACE")
+        open (unit = 15, file = TRIM(prefixo)//"autovetoresZ.dat", STATUS="REPLACE")
 
 
         g1_00 = 0.d0
@@ -185,8 +255,8 @@
        !g1_00 = abs(g1_00)
         g1_00 = 1.d0
       !Plot de função x gamma para z fixo
-      z_fixo = 0.8d0
-      max_gamma_visualizacao = 3.d0
+      ! z_fixo vem do bloco &plot
+      max_gamma_visualizacao = gamma_max
       N_PLOT = 1000
       call SPLMD1(zv, Nmz, z_fixo, splz)
 
@@ -216,7 +286,7 @@
           end do
 
       ! Plot da função variando z para gamma fixo
-      gamma_fixo = 2.d0
+      ! gamma_fixo vem do bloco &plot
       N_PLOT = 1500
       call SPLMD2(gv, Nmg, gamma_fixo, splg)
 
@@ -247,18 +317,18 @@
       ! -------------------------------------------------------------
       ! PLOT DA FUNÇÃO PSI NORMALIZADA: Psi(gamma, 0.2) / Psi(0, 0.5)
       ! -------------------------------------------------------------
-      open(unit = 16, file = "plot_psi.dat", STATUS="UNKNOWN")
+      open(unit = 16, file = TRIM(prefixo)//"plot_psi.dat", STATUS="UNKNOWN")
 
       ! 1. CÁLCULO DA NORMALIZAÇÃO (Denominador): Psi(0.0, 0.5)
-      gamma_den = 0.0d0
-      z_den     = 0.5d0
+      ! gamma_den e xi_den vem do bloco &plot
+      z_den     = xi_den
       psi_den   = 0.d0
       
       !Xi = (1-z)/2
       z_den = 1 - 2*z_den
       ! Avalia a spline em z_den (Fixo fora do loop da integral)
       call SPLMD1(zv, Nmz, z_den, splz)
-      CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
+      CALL legauss(0.d0,gamma_max,Ng,Y,dY,1.d-15)
       ! Integrando em gama' usando os pontos de Gauss Y(p) em [-1, 1]
       do p = 1, Ng
           gammap = Y(p)
@@ -284,8 +354,8 @@
 
 
       ! 2. CÁLCULO DO NUMERADOR E PLOT: Psi(gamma_plot, z0)
-      z_num = 0.2d0
-      max_gamma_visualizacao = 3.d0
+      z_num = xi_num      ! xi_num vem do bloco &plot
+      max_gamma_visualizacao = gamma_max
       N_PLOT = 1000
       
       z_num = 1 - 2*z_num
@@ -327,10 +397,10 @@
       ! -------------------------------------------------------------
       ! PLOT DA FUNÇÃO PSI NORMALIZADA: Psi(gamma0, z) / Psi(0, 0.5)
       ! -------------------------------------------------------------
-      open(unit = 17, file = "plot_psi_z.dat", STATUS="UNKNOWN")
+      open(unit = 17, file = TRIM(prefixo)//"plot_psi_z.dat", STATUS="UNKNOWN")
 
       ! Numerador tem gamma fixo em gamma0
-      gamma_num = 2.0d0
+      ! gamma_num vem do bloco &plot
       N_PLOT = 1500
       
       do k_plot = 0, N_PLOT
@@ -400,12 +470,12 @@
       ! =============================================================
 
       ! Pontos/pesos de Gauss em gamma' para a integral interna do propagador
-      CALL legauss(0.d0, 3.d0, Ng, Y, dY, 1.d-15)
+      CALL legauss(0.d0, gamma_max, Ng, Y, dY, 1.d-15)
 
       ! Malha dos plots
       N_PLOT_G = 200
       N_PLOT_Z = 200
-      max_gamma_visualizacao = 3.d0
+      max_gamma_visualizacao = gamma_max
 
       ! ------------------------------------------------------------
       ! CONSTANTE DE NORMALIZACAO
@@ -413,7 +483,7 @@
       ! Quadratura de Gauss nas duas variaveis: xi direto em [0,1]
       ! (o jacobiano dz = -2 dxi ja esta embutido em integrar em xi).
       ! ------------------------------------------------------------
-      CALL legauss(0.d0, 3.d0, Nv, W, dW, 1.d-15)                  ! em gamma
+      CALL legauss(0.d0, gamma_max, Nv, W, dW, 1.d-15)                  ! em gamma
       CALL legauss(0.d0, 1.d0, Nz, X, dX, 1.d-15)                  ! em xi
 
       Norma = 0.d0
@@ -464,7 +534,7 @@
       ! (a) EQ. 4 -> PLOT 3D:  f1(gamma,xi) = pi |Psi(gamma,xi)|^2
       !     Colunas: gamma, xi, f1
       ! ------------------------------------------------------------
-      open(unit = 21, file = "plot_psi2_3d.dat", STATUS="UNKNOWN")
+      open(unit = 21, file = TRIM(prefixo)//"plot_psi2_3d.dat", STATUS="UNKNOWN")
 
       do k_plot = 0, N_PLOT_Z
           xi_plot = dble(k_plot) / dble(N_PLOT_Z)
@@ -516,10 +586,10 @@
       !     Normalizada: Int_0^1 u(xi) dxi = 1
       !     Colunas: xi, u(xi)
       ! ------------------------------------------------------------
-      open(unit = 22, file = "plot_dist_long.dat", STATUS="UNKNOWN")
+      open(unit = 22, file = TRIM(prefixo)//"plot_dist_long.dat", STATUS="UNKNOWN")
 
       ! Pontos de Gauss para a integral EXTERNA em gamma
-      CALL legauss(0.d0, 3.d0, Nv, W, dW, 1.d-15)
+      CALL legauss(0.d0, gamma_max, Nv, W, dW, 1.d-15)
 
       N_PLOT = 400
       do k_plot = 0, N_PLOT
@@ -572,7 +642,7 @@
       !     Normalizada: Int_0^inf D_perp(gamma) dgamma = 1
       !     Colunas: gamma, D_perp(gamma)
       ! ------------------------------------------------------------
-      open(unit = 23, file = "plot_dist_trans.dat", STATUS="UNKNOWN")
+      open(unit = 23, file = TRIM(prefixo)//"plot_dist_trans.dat", STATUS="UNKNOWN")
 
       ! Pontos de Gauss para a integral EXTERNA em xi, direto em [0,1]
       CALL legauss(0.d0, 1.d0, Nz, X, dX, 1.d-15)
@@ -624,16 +694,29 @@
       close(23)
 
 
+      close(11)
+      close(15)
       DEALLOCATE(splz, splg, c, XG, YG, gv, zv)
+      NFEITOS = NFEITOS + 1
+
+      ! Norma na ultima coluna da linha deste teste em resumo.dat
+      IF (LEN_TRIM(linhas(nlinhas)) .EQ. LARG_RESUMO) THEN
+          WRITE(linhas(nlinhas)(LARG_RESUMO-23:LARG_RESUMO), '(ES24.15)') Norma
+      ELSE
+          WRITE(*,'(A)') ' AVISO: resumo.dat sem a coluna Norma (rodada antiga); Norma nao gravada'
+      END IF
 
 
       end do
 
-      close (15)
-      CLOSE(10)
-      CLOSE(12)
-      close(13)
-      close (14)
+      close(25)
+
+      OPEN(UNIT=25, FILE=TRIM(pasta)//'/resumo.dat', STATUS='REPLACE')
+      DO i = 1, nlinhas
+          WRITE(25,'(A)') TRIM(linhas(i))
+      END DO
+      close(25)
+      WRITE(*,'(A,I0,A,A)') ' Fim: ', NFEITOS, ' teste(s) plotado(s) em ', TRIM(pasta)
     END
 
 

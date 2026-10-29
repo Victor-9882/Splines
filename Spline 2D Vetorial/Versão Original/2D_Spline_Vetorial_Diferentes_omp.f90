@@ -2,14 +2,30 @@
       USE OMP_LIB
       IMPLICIT NONE
 
-!===================== Dimensoes fixas do problema =====================
-      INTEGER, PARAMETER :: NMG   = 20        !Numero de splines em gamma
-      INTEGER, PARAMETER :: NMZ   = 20      !Numero de splines em z
-      INTEGER, PARAMETER :: NMA   = NMG*NMZ         !Dimensao do problema de autovalores
-      INTEGER, PARAMETER :: LWORK = 10*NMA          !Tamanho do buffer de trabalho do LAPACK
+!=======================================================================
+! Todos os parametros vem do arquivo de entrada (padrao: inputs.dat,
+! ou o primeiro argumento da linha de comando), em formato NAMELIST:
+!
+!   &saida  pasta = '...' /          -> pasta onde tudo sera salvo
+!   &teste  ...  /                   -> um bloco por teste (N blocos)
+!
+! Cada bloco &teste herda os valores do bloco anterior; so o primeiro
+! precisa ser completo. Para cada teste sao gravados, dentro da pasta,
+! os arquivos <nome>_*.dat, alem de resumo.dat (uma linha por teste) e
+! uma copia do arquivo de entrada.
+!=======================================================================
+
+!===================== Dimensoes do problema (lidas por teste) =========
+      INTEGER :: NMG                                !Numero de splines em gamma
+      INTEGER :: NMZ                                !Numero de splines em z
+      INTEGER :: NMA                                !Dimensao do problema de autovalores (= NMG*NMZ)
+      INTEGER :: LWORK                              !Tamanho do buffer de trabalho do LAPACK (= 10*NMA)
+      INTEGER, PARAMETER :: NMAX_SPL   = 499        !Limite das rotinas SPLGR* (NP1=500)
+      INTEGER, PARAMETER :: NMAX_GAUSS = 1000       !Tamanho dos vetores do COMMON /ALPHAINT/
+      INTEGER, PARAMETER :: NMAX_TESTES = 500       !Numero maximo de blocos &teste
 
 !===================== Malhas e bases de splines =======================
-      DOUBLE PRECISION :: zv(NMZ+1), gv(300)        !Nos das malhas em z e em gamma (= pontos de colocacao)
+      DOUBLE PRECISION, ALLOCATABLE :: zv(:), gv(:) !Nos das malhas em z e em gamma (= pontos de colocacao)
       INTEGER :: IW                                 !Unidade de saida dos diagnosticos de malha
       INTEGER :: N_intervalZ, N_intervalG           !Numero de intervalos das malhas
       INTEGER :: NCOL                               !Pontos de colocacao por intervalo
@@ -18,7 +34,7 @@
       DOUBLE PRECISION, ALLOCATABLE :: XMATRIX(:,:)  !Lado esquerdo (norma)
       DOUBLE PRECISION, ALLOCATABLE :: ZMATRIX(:,:)  !Lado direito (kernel)
       DOUBLE PRECISION, ALLOCATABLE :: c(:,:)        !Coeficientes cij do autovetor fundamental
-      DOUBLE PRECISION :: XG(NMA), YG(NMA)          !Pontos de colocacao gerados por COLLOC
+      DOUBLE PRECISION, ALLOCATABLE :: XG(:), YG(:)  !Pontos de colocacao gerados por COLLOC
 
 !===================== Saida do DGGEV ==================================
       DOUBLE PRECISION, ALLOCATABLE :: ALPHAR(:), ALPHAI(:) !Numeradores do autovalor generalizado
@@ -44,83 +60,149 @@
       DOUBLE PRECISION :: m1, m2, m                 !Massas dos constituintes e media
       DOUBLE PRECISION :: mu                        !Massa da particula de troca
       DOUBLE PRECISION :: kappa                     !sqrt(m**2 - Mtot**2/4)
-      DOUBLE PRECISION :: gam0                      !Escala de gamma
       DOUBLE PRECISION :: e                         !Regularizacao da diagonal de XMATRIX
       DOUBLE PRECISION :: Alfa                      !Constante de acoplamento extraida de wr(1)
+
+!===================== Parametros das malhas ===========================
+      DOUBLE PRECISION :: A_z, A_g                  !Razao geometrica dos intervalos (G1D) em z e gamma
+      DOUBLE PRECISION :: gamma_max                 !Limite superior em gamma (malha e quadratura)
+      DOUBLE PRECISION :: z_borda                   !Nos extremos em z: zv(1)=-z_borda, zv(NMZ)=+z_borda
 
 !===================== Selecao do kernel ===============================
       !'v' -> kernel vetorial (C0 + f1);  qualquer outro -> kernel escalar
       CHARACTER :: kernel_type
 
-!===================== Conjuntos de parametros lidos de inputs.dat =====
-      INTEGER :: NPARAM                             !Numero de conjuntos a processar
-      INTEGER :: Nnz(100), Nng(100), Nnv(100)       !Pontos de Gauss de cada conjunto
+!===================== Entrada (NAMELIST) ==============================
+      CHARACTER(LEN=40)  :: nome                    !Prefixo dos arquivos do teste (vazio = automatico)
+      CHARACTER(LEN=200) :: pasta                   !Pasta de saida de toda a rodada
+      LOGICAL :: DEBUG_TERMOS                       !Grava <nome>_termos.dat
+      NAMELIST /saida/ pasta
+      NAMELIST /teste/ nome, kernel_type, NMG, NMZ, Nz, Ng, Nv, &
+                       Mtot, m1, m2, mu, e, A_z, A_g, gamma_max, z_borda, &
+                       DEBUG_TERMOS
+      !Valor que marca "nao definido" para checar se o primeiro bloco esta completo
+      DOUBLE PRECISION, PARAMETER :: NAO_DEF = -1.D300
+
+!===================== Controle da rodada ==============================
+      CHARACTER(LEN=256) :: arq_entrada             !Arquivo de entrada
+      CHARACTER(LEN=256) :: prefixo                 !<pasta>/<nome>_
+      CHARACTER(LEN=40)  :: nomes(NMAX_TESTES)      !Nomes ja usados (detecta repeticao)
+      CHARACTER(LEN=256) :: msg_io
+      INTEGER :: NTESTES                            !Numero de blocos &teste no arquivo
+      INTEGER :: ios
+      LOGICAL :: existe
+      INTEGER :: data_hora(8)
+      INTEGER(KIND=8) :: T_INI, T_FIM, T_TAXA       !Cronometragem de cada teste
+      DOUBLE PRECISION :: T_TESTE
+      DOUBLE PRECISION :: Alfa_ant                  !Alfa do teste anterior (para alfas.dat)
+      LOGICAL :: tem_ant                            !Ja existe um teste anterior bem-sucedido
 
 !===================== Variaveis do laco externo =======================
-      INTEGER :: ii                                 !Indice do conjunto de parametros
+      INTEGER :: ii                                 !Indice do teste
       INTEGER :: i, j                               !Indices genericos
 
 !===================== Diagnostico em termos.dat =======================
       !Ponto do dominio escolhido para o diagnostico
       INTEGER :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
-      LOGICAL, PARAMETER :: DEBUG_TERMOS = .TRUE.
 
 !===================== Cronometragem OpenMP ============================
       DOUBLE PRECISION :: TSTART_EIG, TEND_EIG
-      INTEGER :: NTHREADS_MKL
 
-!===================== Alocacao dos arrays grandes no heap =============
-        ALLOCATE(XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA), c(NMG,NMZ))
-        ALLOCATE(ALPHAR(NMA), ALPHAI(NMA), BETA(NMA))
-        ALLOCATE(WR(NMA), WI(NMA))
-        ALLOCATE(VR(NMA,NMA), VL(NMA,2*NMA), WORK(LWORK))
-
-        open (unit = 10, file = "autovalores.dat",STATUS="UNKNOWN")
-        open (unit = 12, file = "alfa.dat",STATUS="UNKNOWN")
-        open (unit = 11, file = "autovetores.dat",STATUS="UNKNOWN")
-        open (UNIT = 20, FILE = "inputs.dat", STATUS="UNKNOWN")
-        open (unit = 14, file = 'erros.dat', status='unknown')
-        open (unit = 16, file = "coeficientes.dat",STATUS="UNKNOWN")
-        open (unit = 18, file = "termos.dat", STATUS="UNKNOWN")
-
-        e = 0.000001d0
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
 
-      READ(20,*) NPARAM
-      READ(20,*) kernel_type
-          DO I = 1, NPARAM
-           READ(20,*) nnz(I), nng(I), nnv(I)
-          END DO
-    CLOSE(20)
+!===================== Leitura do arquivo de entrada ===================
+        CALL GET_COMMAND_ARGUMENT(1, arq_entrada)
+        IF (LEN_TRIM(arq_entrada) .EQ. 0) arq_entrada = 'inputs.dat'
 
-     !Parâmetros
-          !Massas
-          Mtot = 1.90d0
-          m1 = 1.0d0
-          m2 = 1.0d0
-          m = (m1 + m2)/2
-          mu = 2.0d0
-          kappa = sqrt(m**2 - 0.25*Mtot**2)
+        OPEN(UNIT=20, FILE=TRIM(arq_entrada), STATUS='OLD', ACTION='READ', IOSTAT=ios)
+        IF (ios .NE. 0) THEN
+           PRINT *, 'ERRO: nao foi possivel abrir ', TRIM(arq_entrada)
+           STOP 1
+        END IF
 
-          gam0 = 10.0d0
+        pasta = ''
+        READ(20, NML=saida, IOSTAT=ios, IOMSG=msg_io)
+        IF (ios .NE. 0 .OR. LEN_TRIM(pasta) .EQ. 0) THEN
+           PRINT *, 'ERRO: bloco &saida com "pasta" ausente ou invalido em ', TRIM(arq_entrada)
+           IF (ios .GT. 0) PRINT *, TRIM(msg_io)
+           STOP 1
+        END IF
 
-          WRITE(10, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
-          WRITE(10, '(7(A, F20.10))') &
-         & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, " gam0: ", gam0, &
-         & " m1: ", m1, " m2: ", m2
-          WRITE(10, '(A,A)') " kernel_type: ", kernel_type
-          WRITE(10, *) "-----Splines Vetorial Massas Diferentes------------------------"
+        !1a passada: valida TODOS os testes antes de gastar tempo de calculo
+        REWIND(20)
+        CALL ZERAR_PARAMETROS()
+        NTESTES = 0
+        DO
+           nome = ''
+           READ(20, NML=teste, IOSTAT=ios, IOMSG=msg_io)
+           IF (ios .LT. 0) EXIT
+           IF (ios .GT. 0) THEN
+              PRINT '(A,I0,A)', ' ERRO ao ler o bloco &teste numero ', NTESTES+1, ':'
+              PRINT *, TRIM(msg_io)
+              STOP 1
+           END IF
+           NTESTES = NTESTES + 1
+           IF (NTESTES .GT. NMAX_TESTES) THEN
+              PRINT '(A,I0)', ' ERRO: numero de testes maior que NMAX_TESTES = ', NMAX_TESTES
+              STOP 1
+           END IF
+           CALL VALIDAR_E_NOMEAR(NTESTES)
+           DO i = 1, NTESTES-1
+              IF (nomes(i) .EQ. nome) THEN
+                 PRINT '(A,I0,A,I0,A,A)', ' ERRO: testes ', i, ' e ', NTESTES, &
+                       ' tem o mesmo nome: ', TRIM(nome)
+                 STOP 1
+              END IF
+           END DO
+           nomes(NTESTES) = nome
+        END DO
 
-          WRITE(12, *) "-----Splines Vetorial Massas Diferentes------------------------"
-          WRITE(12, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
-          WRITE(12, '(7(A, F20.10))') &
-         & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, " gam0: ", gam0, &
-         & " m1: ", m1, " m2: ", m2
-          WRITE(12, '(A,A)') " kernel_type: ", kernel_type
+        IF (NTESTES .EQ. 0) THEN
+           PRINT *, 'ERRO: nenhum bloco &teste encontrado em ', TRIM(arq_entrada)
+           STOP 1
+        END IF
 
-            iw = 14
-            N_intervalZ = (NMZ-1)/2
-            N_intervalG = (NMG-1)/2
+!===================== Pasta de saida ==================================
+        !Nunca sobrescreve uma rodada anterior
+        INQUIRE(FILE=TRIM(pasta)//'/resumo.dat', EXIST=existe)
+        IF (existe) THEN
+           PRINT *, 'ERRO: ', TRIM(pasta), '/resumo.dat ja existe.'
+           PRINT *, '      Escolha outra "pasta" no bloco &saida para nao sobrescrever resultados.'
+           STOP 1
+        END IF
+
+        CALL EXECUTE_COMMAND_LINE('mkdir -p "'//TRIM(pasta)//'"', EXITSTAT=ios)
+        IF (ios .NE. 0) THEN
+           PRINT *, 'ERRO: nao foi possivel criar a pasta ', TRIM(pasta)
+           STOP 1
+        END IF
+        CALL EXECUTE_COMMAND_LINE('cp "'//TRIM(arq_entrada)//'" "'//TRIM(pasta)//'/inputs.dat"')
+
+        OPEN(UNIT=30, FILE=TRIM(pasta)//'/resumo.dat', STATUS='NEW')
+        CALL DATE_AND_TIME(VALUES=data_hora)
+        WRITE(30,'(A,I4.4,"-",I2.2,"-",I2.2," ",I2.2,":",I2.2,":",I2.2)') &
+              '# Rodada iniciada em ', data_hora(1:3), data_hora(5:7)
+        WRITE(30,'(A,A)') '# Entrada: ', TRIM(arq_entrada)
+        WRITE(30,'(A)') '# Parametros completos de cada teste em <nome>_parametros.dat'
+        WRITE(30,'(A)') '# Norma = pi*Int dxi Int dgamma |Psi|^2 (antes do reescalonamento):'
+        WRITE(30,'(A)') '#   preenchida pelo programa de plot; NaN enquanto o plot nao rodar'
+        WRITE(30,'(A1,A40,5A6,A3,6A12,2A24,A12,A24)') '#', 'nome', 'NMG', 'NMZ', 'Nz', 'Ng', 'Nv', 'k', &
+              'Mtot', 'm1', 'm2', 'mu', 'A_z', 'A_g', 'Alfa', 'wr(1)', 'tempo(s)', 'Norma'
+        FLUSH(30)
+
+        !So os alfas, para os testes de convergencia (colunas numericas primeiro)
+        OPEN(UNIT=31, FILE=TRIM(pasta)//'/alfas.dat', STATUS='NEW')
+        WRITE(31,'(A,I4.4,"-",I2.2,"-",I2.2," ",I2.2,":",I2.2,":",I2.2)') &
+              '# Rodada iniciada em ', data_hora(1:3), data_hora(5:7)
+        WRITE(31,'(A)') '# dAlfa = Alfa - Alfa do teste anterior (0 no primeiro teste)'
+        WRITE(31,'(A1,A3,5A6,2A24,2X,A)') '#', 'i', 'NMG', 'NMZ', 'Nz', 'Ng', 'Nv', &
+              'Alfa', 'dAlfa', 'nome'
+        FLUSH(31)
+        tem_ant = .FALSE.
+        Alfa_ant = 0.d0
+
+        PRINT '(A,I0,A,A)', ' ', NTESTES, ' teste(s) validado(s). Saida em: ', TRIM(pasta)
+
             NCOL = 2
 
         !Ponto do dominio (z, z', gamma, gamma', v) onde os termos serao impressos
@@ -132,17 +214,75 @@
             q_dbg = 10     !indice de Gauss em z'
             r_dbg = 10    !indice de Gauss em v
 
-        do ii = 1, NPARAM
-            print*, ii
+!===================== 2a passada: executa os testes ===================
+        REWIND(20)
+        CALL ZERAR_PARAMETROS()
 
-          !Número de pontos de Gauss para integração em cada variável
-          Nz = Nnz(ii)
-          Ng = Nng (ii)
-          Nv = Nnv (ii)
+        do ii = 1, NTESTES
+          nome = ''
+          READ(20, NML=teste)
+          CALL VALIDAR_E_NOMEAR(ii)
+
+          WRITE(*,*)
+          WRITE(*,'(A,I0,A,I0,A,A)') " ===== Teste ", ii, " de ", NTESTES, ": ", TRIM(nome)
+          CALL SYSTEM_CLOCK(T_INI, T_TAXA)
+
+     !Parâmetros derivados
+          m = (m1 + m2)/2
+          kappa = sqrt(m**2 - 0.25*Mtot**2)
+          NMA   = NMG*NMZ
+          LWORK = 10*NMA
+
+          ALLOCATE(XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA), c(NMG,NMZ))
+          ALLOCATE(ALPHAR(NMA), ALPHAI(NMA), BETA(NMA))
+          ALLOCATE(WR(NMA), WI(NMA))
+          ALLOCATE(VR(NMA,NMA), VL(NMA,2*NMA), WORK(LWORK))
+          ALLOCATE(zv(NMZ+1), gv(NMG+1), XG(NMZ), YG(NMG))
+
+          prefixo = TRIM(pasta)//'/'//TRIM(nome)//'_'
+          open (unit = 10, file = TRIM(prefixo)//"autovalores.dat",  STATUS="REPLACE")
+          open (unit = 12, file = TRIM(prefixo)//"alfa.dat",         STATUS="REPLACE")
+          open (unit = 14, file = TRIM(prefixo)//"erros.dat",        STATUS="REPLACE")
+          open (unit = 16, file = TRIM(prefixo)//"coeficientes.dat", STATUS="REPLACE")
+          IF (DEBUG_TERMOS) &
+          open (unit = 18, file = TRIM(prefixo)//"termos.dat",       STATUS="REPLACE")
+
+      !------------------ Parametros exatos do teste --------------------
+      !Este arquivo pode ser usado de novo como bloco &teste de entrada
+          open (unit = 19, file = TRIM(prefixo)//"parametros.dat", STATUS="REPLACE")
+          CALL DATE_AND_TIME(VALUES=data_hora)
+          WRITE(19,'(A,I4.4,"-",I2.2,"-",I2.2," ",I2.2,":",I2.2,":",I2.2)') &
+                '! Executado em ', data_hora(1:3), data_hora(5:7)
+          WRITE(19,'(A,A,A,I0)') '! Entrada: ', TRIM(arq_entrada), ', bloco &teste numero ', ii
+          WRITE(19, NML=teste)
+          WRITE(19,'(A)') '! Derivados:'
+          WRITE(19,'(A,I0)')      '!   NMA   = ', NMA
+          WRITE(19,'(A,ES24.15)') '!   m     = ', m
+          WRITE(19,'(A,ES24.15)') '!   kappa = ', kappa
+          CLOSE(19)
+
+          WRITE(10, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
+          WRITE(10, '(6(A, F20.10))') &
+         & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, &
+         & " m1: ", m1, " m2: ", m2
+          WRITE(10, '(A,A)') " kernel_type: ", kernel_type
+          WRITE(10, *) "-----Splines Vetorial Massas Diferentes------------------------"
+
+          WRITE(12, *) "-----Splines Vetorial Massas Diferentes------------------------"
+          WRITE(12, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
+          WRITE(12, '(6(A, F20.10))') &
+         & "Mtot: ", Mtot, " mu: ", mu, " kappa: ", kappa, " e: ", e, &
+         & " m1: ", m1, " m2: ", m2
+          WRITE(12, '(A,A)') " kernel_type: ", kernel_type
+
+            iw = 14
+            N_intervalZ = (NMZ-1)/2
+            N_intervalG = (NMG-1)/2
 
       !------------------ Cabecalho de termos.dat: parametros ------------------
+          IF (DEBUG_TERMOS) THEN
           WRITE(18,*) "========================================================"
-          WRITE(18,'(A,I0)') " CONJUNTO DE PARAMETROS ii = ", ii
+          WRITE(18,'(A,I0,A,A)') " TESTE ii = ", ii, "  nome = ", TRIM(nome)
           WRITE(18,*) " Splines Vetorial - Massas Diferentes"
           WRITE(18,*) "========================================================"
           WRITE(18,*) "--- Massas e parametros fisicos ---"
@@ -152,7 +292,6 @@
           WRITE(18,'(A,F20.10)') " m     = ", m
           WRITE(18,'(A,F20.10)') " mu    = ", mu
           WRITE(18,'(A,F20.10)') " kappa = ", kappa
-          WRITE(18,'(A,F20.10)') " gam0  = ", gam0
           WRITE(18,'(A,F20.10)') " e     = ", e
           WRITE(18,'(A,F20.10)') " PI    = ", PI
           WRITE(18,'(A,A)')      " kernel_type = ", kernel_type
@@ -165,18 +304,19 @@
           WRITE(18,'(A,I0)') " Ng (Gauss em gamma')   = ", Ng
           WRITE(18,'(A,I0)') " Nv (Gauss em v)        = ", Nv
           WRITE(18,*) "--------------------------------------------------------"
+          END IF
 
-        call G1D(IW,-1.d0, N_intervalZ, 0.8d0, 1.d0, X)
+        call G1D(IW,-1.d0, N_intervalZ, A_z, 1.d0, X)
         call COLLOC(IW,2,N_intervalZ,X,XG)
 
         do i = 1, 2*N_intervalZ
           zv(i+1) = XG(i)
         end do
 
-        zv(1)=-0.9999999d0
-        zv(nmz)= 0.9999999d0
+        zv(1)  = -z_borda
+        zv(nmz)=  z_borda
 
-        call G1D(IW,0.d0, N_intervalG, 1.0d0, 3.d0, Y)
+        call G1D(IW,0.d0, N_intervalG, A_g, gamma_max, Y)
         call COLLOC(IW,2,N_intervalG,Y,YG)
 
         do i=1, 2*N_intervalG
@@ -184,7 +324,7 @@
         enddo
 
         gv(1) = 0.d0
-        gv(nmg) = 3.d0
+        gv(nmg) = gamma_max
 
     !Preparação das Splines
         call SPLGR1 (zv,Nmz)
@@ -196,7 +336,7 @@
         CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
 
 
-        CALL legauss(0.d0,3.d0,Ng,Y,dY,1.d-15)
+        CALL legauss(0.d0,gamma_max,Ng,Y,dY,1.d-15)
         CALL legauss(0.d0,1.d0,Nv,W,dW,1.d-15)
 
     !Montagem das matrizes
@@ -210,7 +350,7 @@
                 xmatrix (i,i) = xmatrix (i,i) + e
             end do
 
-        WRITE(*,'(A,I0,A)') " DGGEV com ", NTHREADS_MKL, " thread(s) MKL..."
+        WRITE(*,'(A)') " DGGEV..."
 
         TSTART_EIG = 0.d0
 !$      TSTART_EIG = OMP_GET_WTIME()
@@ -223,11 +363,14 @@
 !$      WRITE(*,'(A,F12.3,A)') " Tempo do DGGEV                 = ", &
 !$                             TEND_EIG-TSTART_EIG, " s"
 
-        ! Verificação de erro
+        ! Verificação de erro: registra a falha e segue para o proximo teste
         IF (INFO .NE. 0) THEN
-            PRINT *, 'ERRO NO DGGEV: INFO = ', INFO
-            STOP
-        ENDIF
+            PRINT *, 'ERRO NO DGGEV: INFO = ', INFO, ' (teste ', TRIM(nome), ')'
+            WRITE(30,'(A2,A,A,I0)') '# ', TRIM(nome), '  FALHOU: DGGEV INFO = ', INFO
+            FLUSH(30)
+            WRITE(31,'(A2,A,A,I0)') '# ', TRIM(nome), '  FALHOU: DGGEV INFO = ', INFO
+            FLUSH(31)
+        ELSE
 
         ! O DGGEV retorna (ALPHAR + i*ALPHAI) e BETA.
         ! O autovalor real é lambda = alpha / beta.
@@ -269,22 +412,123 @@
          WRITE(16, '(9999ES16.8)') (c(I,J), J=1, NMZ)
       END DO
 
-      end do
+      CALL SYSTEM_CLOCK(T_FIM)
+      T_TESTE = DBLE(T_FIM - T_INI)/DBLE(T_TAXA)
+
+      !Uma linha por teste: o programa de plot le os nomes daqui
+      !A ultima coluna (Norma, 24 caracteres) e sobrescrita pelo programa de plot
+      WRITE(30,'(1X,A40,5I6,2X,A1,6F12.6,2ES24.15,F12.2,A24)') nome, NMG, NMZ, Nz, Ng, Nv, &
+            kernel_type, Mtot, m1, m2, mu, A_z, A_g, Alfa, wr(1), T_TESTE, 'NaN'
+      FLUSH(30)
+
+      IF (.NOT. tem_ant) Alfa_ant = Alfa
+      WRITE(31,'(1X,I3,5I6,2ES24.15,2X,A)') ii, NMG, NMZ, Nz, Ng, Nv, &
+            Alfa, Alfa - Alfa_ant, TRIM(nome)
+      FLUSH(31)
+      Alfa_ant = Alfa
+      tem_ant = .TRUE.
+
+      WRITE(*,'(A,F20.10,A,F10.2,A)') " Alfa = ", Alfa, "   (", T_TESTE, " s)"
+
+        END IF
+
+      CLOSE(10)
+      CLOSE(12)
+      CLOSE(14)
+      CLOSE(16)
+      IF (DEBUG_TERMOS) CLOSE(18)
 
       DEALLOCATE(XMATRIX, ZMATRIX, c)
       DEALLOCATE(ALPHAR, ALPHAI, BETA, WR, WI)
       DEALLOCATE(VR, VL, WORK)
+      DEALLOCATE(zv, gv, XG, YG)
 
-      CLOSE(16)
-      CLOSE(18)
-      CLOSE(10)
-      CLOSE(12)
-      CLOSE(14)
-10     FORMAT(11E12.4)
-18     format(5e15.6)
-20     FORMAT(A70)
+      end do
 
-       Close(2)
+      CLOSE(20)
+      CLOSE(30)
+      CLOSE(31)
+      WRITE(*,*)
+      WRITE(*,'(A,A)') " Fim. Resumo em ", TRIM(pasta)//'/resumo.dat'
+
+      CONTAINS
+
+! -----------------------------------------------------------------------
+! Marca todos os parametros como "nao definidos" antes de ler o arquivo.
+! Os blocos &teste seguintes herdam o que nao redefinirem.
+! -----------------------------------------------------------------------
+      SUBROUTINE ZERAR_PARAMETROS()
+        kernel_type = ' '
+        NMG = -1;  NMZ = -1
+        Nz  = -1;  Ng  = -1;  Nv = -1
+        Mtot = NAO_DEF;  m1 = NAO_DEF;  m2 = NAO_DEF;  mu = NAO_DEF
+        e    = NAO_DEF
+        A_z  = NAO_DEF;  A_g = NAO_DEF
+        gamma_max = NAO_DEF;  z_borda = NAO_DEF
+        DEBUG_TERMOS = .FALSE.
+      END SUBROUTINE ZERAR_PARAMETROS
+
+! -----------------------------------------------------------------------
+! Confere o teste corrente e, se "nome" veio vazio, gera um automatico.
+! Interrompe o programa com uma mensagem clara em caso de erro.
+! -----------------------------------------------------------------------
+      SUBROUTINE VALIDAR_E_NOMEAR(it)
+        INTEGER, INTENT(IN) :: it
+        LOGICAL :: ok
+
+        ok = .TRUE.
+        IF (kernel_type .EQ. ' ') CALL ERRO_TESTE(it, 'parametro nao definido: kernel_type', ok)
+        IF (NMG .LT. 0)  CALL ERRO_TESTE(it, 'parametro nao definido: NMG', ok)
+        IF (NMZ .LT. 0)  CALL ERRO_TESTE(it, 'parametro nao definido: NMZ', ok)
+        IF (Nz .LT. 0)   CALL ERRO_TESTE(it, 'parametro nao definido: Nz', ok)
+        IF (Ng .LT. 0)   CALL ERRO_TESTE(it, 'parametro nao definido: Ng', ok)
+        IF (Nv .LT. 0)   CALL ERRO_TESTE(it, 'parametro nao definido: Nv', ok)
+        IF (Mtot .EQ. NAO_DEF) CALL ERRO_TESTE(it, 'parametro nao definido: Mtot', ok)
+        IF (m1 .EQ. NAO_DEF)   CALL ERRO_TESTE(it, 'parametro nao definido: m1', ok)
+        IF (m2 .EQ. NAO_DEF)   CALL ERRO_TESTE(it, 'parametro nao definido: m2', ok)
+        IF (mu .EQ. NAO_DEF)   CALL ERRO_TESTE(it, 'parametro nao definido: mu', ok)
+        IF (e .EQ. NAO_DEF)    CALL ERRO_TESTE(it, 'parametro nao definido: e', ok)
+        IF (A_z .EQ. NAO_DEF)  CALL ERRO_TESTE(it, 'parametro nao definido: A_z', ok)
+        IF (A_g .EQ. NAO_DEF)  CALL ERRO_TESTE(it, 'parametro nao definido: A_g', ok)
+        IF (gamma_max .EQ. NAO_DEF) CALL ERRO_TESTE(it, 'parametro nao definido: gamma_max', ok)
+        IF (z_borda .EQ. NAO_DEF)   CALL ERRO_TESTE(it, 'parametro nao definido: z_borda', ok)
+
+        IF (ok) THEN
+          IF (NMG .LT. 3 .OR. NMG .GT. NMAX_SPL .OR. NMZ .LT. 3 .OR. NMZ .GT. NMAX_SPL) &
+             CALL ERRO_TESTE(it, 'NMG e NMZ devem estar entre 3 e 499', ok)
+          IF (Nz .LT. 1 .OR. Nz .GT. NMAX_GAUSS .OR. Ng .LT. 1 .OR. Ng .GT. NMAX_GAUSS &
+              .OR. Nv .LT. 1 .OR. Nv .GT. NMAX_GAUSS) &
+             CALL ERRO_TESTE(it, 'Nz, Ng e Nv devem estar entre 1 e 1000', ok)
+          IF (((m1+m2)/2)**2 - 0.25d0*Mtot**2 .LE. 0.d0) &
+             CALL ERRO_TESTE(it, 'kappa imaginario: precisa ((m1+m2)/2)**2 > Mtot**2/4', ok)
+          IF (z_borda .LE. 0.d0 .OR. z_borda .GT. 1.d0) &
+             CALL ERRO_TESTE(it, 'z_borda deve estar em (0, 1]', ok)
+          IF (gamma_max .LE. 0.d0) CALL ERRO_TESTE(it, 'gamma_max deve ser positivo', ok)
+          IF (A_z .LE. 0.d0 .OR. A_g .LE. 0.d0) CALL ERRO_TESTE(it, 'A_z e A_g devem ser positivos', ok)
+        END IF
+
+        IF (LEN_TRIM(nome) .EQ. 0) THEN
+           WRITE(nome,'(A,I2.2,5(A,I0),A,A)') 'T', it, '_NMG', NMG, '_NMZ', NMZ, &
+                 '_Nz', Nz, '_Ng', Ng, '_Nv', Nv, '_', kernel_type
+        ELSE IF (SCAN(TRIM(nome), ' /') .GT. 0) THEN
+           CALL ERRO_TESTE(it, 'nome nao pode ter espacos nem "/"', ok)
+        END IF
+
+        IF (.NOT. ok) THEN
+           PRINT '(A,I0,A)', ' Corrija o bloco &teste numero ', it, ' (ou o primeiro bloco).'
+           STOP 1
+        END IF
+
+      END SUBROUTINE VALIDAR_E_NOMEAR
+
+      SUBROUTINE ERRO_TESTE(it, texto, ok)
+        INTEGER, INTENT(IN) :: it
+        CHARACTER(LEN=*), INTENT(IN) :: texto
+        LOGICAL, INTENT(INOUT) :: ok
+        PRINT '(A,I0,A,A)', ' ERRO no teste ', it, ': ', texto
+        ok = .FALSE.
+      END SUBROUTINE ERRO_TESTE
+
     END PROGRAM SPLINE_VETORIAL
 
 
@@ -947,16 +1191,7 @@
       SPL(I)=SPL(I)+1.D0  
                         return   
       END
-    
-    
-    
-    
-    
-    
-    
-    
-    
-
+        
       SUBROUTINE legauss(XS,XL,N,X,DX,ZZ)
 
       IMPLICIT DOUBLE PRECISION (A-H,O-Z)
@@ -1061,11 +1296,8 @@
 12    continue
       return
     END
-    
-    
-    
-    
-          subroutine setgaulag(aa,n,xx,wei)
+       
+      subroutine setgaulag(aa,n,xx,wei)
       implicit real*8(a-h,o-z) 
 
       dimension xx(300),wei(300),tdvr(300,300)

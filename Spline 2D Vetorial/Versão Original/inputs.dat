@@ -1,3 +1,63 @@
-1
-v
-40 40 40
+! =====================================================================
+!  Entrada do 2D_Spline_Vetorial_Diferentes_omp.f90 e do Plot_funcoes.f90
+!
+!  Formato NAMELIST: cada bloco comeca com &nome e termina com "/".
+!  Texto fora dos blocos e tudo depois de "!" sao ignorados.
+!
+!  &saida : pasta onde a rodada inteira sera salva. O programa se recusa
+!           a rodar se a pasta ja tiver um resumo.dat (nao sobrescreve).
+!  &plot  : parametros usados so pelo Plot_funcoes.f90.
+!  &teste : um bloco por teste. Cada bloco HERDA os valores do anterior,
+!           entao basta escrever o que muda. O primeiro deve ser completo.
+!           "nome" NAO e herdado: vazio -> nome automatico
+!           (T01_NMG20_NMZ50_Nz30_Ng30_Nv30_v).
+!
+!  Saida, para cada teste, em <pasta>/<nome>_*.dat:
+!     parametros, autovalores, alfa, coeficientes, erros, termos
+!  e tambem <pasta>/resumo.dat (uma linha por teste) e <pasta>/inputs.dat.
+! =====================================================================
+
+&saida
+  pasta = 'Resultados/2026-10-29_Vetorial_Massas_Diferentes'
+/
+
+&plot
+  Nz_plot = 60, Ng_plot = 60, Nv_plot = 60   ! pontos de Gauss das integrais dos plots
+  z_fixo     = 0.0      ! corte em z de autovetoresG
+  gamma_fixo = 0.0      ! corte em gamma de autovetoresZ
+  gamma_den  = 0.0, xi_den = 0.5   ! ponto de normalizacao Psi(gamma_den, xi_den)
+  xi_num     = 0.2      ! xi fixo de plot_psi
+  gamma_num  = 2.0      ! gamma fixo de plot_psi_z
+/
+
+&teste
+  nome        = 'Teste1'        ! prefixo dos arquivos (sem espacos); '' -> automatico
+  kernel_type = 'v'       ! 'v' vetorial, 'e' escalar
+
+  ! Numero de splines (NMA = NMG*NMZ e calculado)
+  NMG = 20
+  NMZ = 20
+
+  ! Pontos de Gauss das integrais em z', gamma' e v
+  Nz = 40, Ng = 40, Nv = 30
+
+  ! Fisica
+  Mtot = 2.0             ! massa do estado ligado
+  m1   = 1.0, m2 = 1.1    ! constituintes (m = (m1+m2)/2)
+  mu   = 1.8             ! massa da particula de troca
+
+  ! Malhas
+  A_z       = 1.0         ! razao geometrica dos intervalos em z (1.0 = uniforme)
+  A_g       = 1.0         ! razao geometrica dos intervalos em gamma
+  gamma_max = 3.0         ! fim da malha e da integracao em gamma
+  z_borda   = 0.9999999   ! nos extremos: zv(1) = -z_borda, zv(NMZ) = +z_borda
+
+  e = 1.0d-6              ! regularizacao da diagonal de XMATRIX
+  DEBUG_TERMOS = .FALSE.   ! grava <nome>_termos.dat
+/
+
+! Exemplo de varredura: so o que muda em relacao ao bloco anterior
+!&teste  nome = 'Teste2'  NMZ = 40/
+!&teste  nome = 'Teste3'  Ng = 50/
+
+
