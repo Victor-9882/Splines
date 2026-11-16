@@ -1,8 +1,11 @@
 !Funcoes PURE do kernel: P^(1) (MODULE KERNEL_P1) e termo (1-zeta) (MODULE KERNEL_P2_ZETA)
       INCLUDE 'kernel.f90'
+!Limitante inferior gamma_min(z) do suporte de g (MODULE GAMMA_MIN_MOD)
+      INCLUDE 'gamma_min.f90'
 
       PROGRAM SPLINE_VETORIAL
       USE OMP_LIB
+      USE GAMMA_MIN_MOD
       IMPLICIT NONE
 
 !=======================================================================
@@ -83,10 +86,12 @@
       CHARACTER(LEN=200) :: pasta                   !Pasta de saida de toda a rodada
       LOGICAL :: DEBUG_TERMOS                       !Grava <nome>_termos.dat
       LOGICAL :: SALVAR_MATRIZES                    !Grava ZMATRIX e XMATRIX (antes do DGGEV) em <nome>_matrizes.bin
+      LOGICAL :: USAR_GMIN                          !gamma' >= gamma_min(z') (variavel deslocada); .FALSE. = gamma' >= 0
+      LOGICAL :: CHECAR_DENOM                       !Grava <nome>_denominadores.dat (minimos nos pontos de quadratura)
       NAMELIST /saida/ pasta
       NAMELIST /teste/ nome, kernel_type, NMG, NMZ, Nz, Ng, Nv, Nu, &
                        Mtot, m1, m2, mu, zeta, e, A_z, A_g, gamma_max, z_borda, &
-                       DEBUG_TERMOS, SALVAR_MATRIZES
+                       DEBUG_TERMOS, SALVAR_MATRIZES, USAR_GMIN, CHECAR_DENOM
       !Valor que marca "nao definido" para checar se o primeiro bloco esta completo
       DOUBLE PRECISION, PARAMETER :: NAO_DEF = -1.D300
 
@@ -291,6 +296,10 @@
           WRITE(19,'(A,ES24.15)') '!   kappa = ', kappa
           WRITE(19,'(A,I0)')      '!   Nu    = ', Nu_ef
           WRITE(19,'(A,L1)')      '!   P^(2) calculado = ', P2_ATIVO
+          WRITE(19,'(A,ES24.15)') '!   Delta = (m2-m1)/2 = ', 0.5d0*(m2 - m1)
+          WRITE(19,'(A,ES24.15)') '!   gamma_min(z=-1)   = ', GAMMA_MIN_EF(-1.d0, m1, m2, USAR_GMIN)
+          WRITE(19,'(A,ES24.15)') '!   gamma_min(z=+1)   = ', GAMMA_MIN_EF( 1.d0, m1, m2, USAR_GMIN)
+          WRITE(19,'(A)') '!   g e expandida em gamma~ = gamma'' - gamma_min(z'') em [0, gamma_max]'
           CLOSE(19)
 
           WRITE(10, '(A, I0, A, I0, A, I0)') "NMA: ", nma, " NMG: ", nmg, " NMZ: ", nmz
@@ -376,16 +385,20 @@
         !Variavel normalizada t em [0,1]; u = (1-v) t (so no termo 1-zeta)
         CALL legauss(0.d0,1.d0,Nu_ef,T,dT,1.d-15)
 
+    !Diagnostico: minimos dos denominadores nos pontos de colocacao/quadratura
+        IF (CHECAR_DENOM) CALL CHECA_DENOMINADORES(13, TRIM(prefixo)//'denominadores.dat', zv, gv, NMZ, NMG, &
+                                 m, m1, m2, mu, kappa, Mtot, X, Y, W, Nz, Ng, Nv, USAR_GMIN)
+
     !Montagem das matrizes
         CALL BUILD_ZMATRIX(zv, gv, NMZ, NMG, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
                            X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
-                           ZMATRIX, XMATRIX, kernel_type)
+                           ZMATRIX, XMATRIX, kernel_type, USAR_GMIN)
 
     !Diagnostico de P^(1) no ponto escolhido (fora do laco paralelo)
         IF (DEBUG_TERMOS) CALL TERMOS_P1(18, zv, gv, NMZ, NMG, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
                                          X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
                                          ZMATRIX, XMATRIX, kernel_type, &
-                                         i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+                                         i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg, USAR_GMIN)
 
     !Termo (1-zeta): kernel P^(1) -> P^(1) - (1-zeta) P^(2)
     !ZMATRIX representa +1/(32 pi^2) Int P^(1); entao P^(2) entra com -(1-zeta)/(32 pi^2)
@@ -393,7 +406,7 @@
           ALLOCATE(Z2REG(NMA,NMA), Z2DEL(NMA,NMA))
           CALL BUILD_ZMATRIX_P2(zv, gv, NMZ, NMG, NMA, m1, m2, mu, Mtot, zeta, &
                                 X, dX, Y, dY, W, dW, T, dT, Nz, Ng, Nv, Nu_ef, &
-                                Z2REG, Z2DEL, ok_p2, err_p2)
+                                Z2REG, Z2DEL, ok_p2, err_p2, USAR_GMIN)
           IF (.NOT. ok_p2) THEN
              PRINT *, 'ERRO em P^(2): f >= 0, a >= 0 ou valor nao finito (teste ', TRIM(nome), ')'
              PRINT '(A,5I6)', '  primeiro ponto (i, j, p, q, ramo; q=0 -> termo delta) = ', err_p2
@@ -405,7 +418,7 @@
 
           IF (DEBUG_TERMOS) CALL TERMOS_P2(18, zv, gv, NMZ, NMG, NMA, m1, m2, mu, Mtot, zeta, PI, &
                                            X, Y, dY, W, dW, T, dT, Nz, Ng, Nv, Nu_ef, Z2REG, Z2DEL, &
-                                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+                                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg, USAR_GMIN)
 
 
           ZMATRIX = ZMATRIX - (1.d0 - zeta)/(32.d0*PI**2) * (Z2REG + Z2DEL)
@@ -583,6 +596,8 @@
         Nu   = -1                 !-1 -> Nu = Nv
         DEBUG_TERMOS = .FALSE.
         SALVAR_MATRIZES = .FALSE.
+        USAR_GMIN = .TRUE.        !gamma_min(z) ligado por padrao
+        CHECAR_DENOM = .FALSE.
       END SUBROUTINE ZERAR_PARAMETROS
 
 ! -----------------SUBROUTINE VALIDAR_E_NOMEAR(it)-------------------------
@@ -691,6 +706,82 @@
 
     END PROGRAM SPLINE_VETORIAL
 
+! -----------------SUBROUTINE CHECA_DENOMINADORES--------------------------
+! Diagnostico (CHECAR_DENOM = .TRUE.): percorre todos os pontos de
+! colocacao (gamma_i, z_j) e de quadratura (gamma~_p, z'_q, v_r) e grava
+! o minimo de cada denominador do kernel P^(1) e do lado esquerdo, com
+! gamma' = gamma~ + gamma_min(z'). Todos devem ser > 0 (ausencia de polos
+! no dominio de integracao). Du e Dd sao divididos por (1+z) e (1-z),
+! fatores que os anulam trivialmente em z = -1 e z = +1.
+! -----------------------------------------------------------------------
+      SUBROUTINE CHECA_DENOMINADORES(iu, arquivo, zv, gv, Nmz, Nmg, m, m1, m2, mu, kappa, Mtot, &
+                                     X, Y, W, Nz, Ng, Nv, USAR_GMIN)
+      USE KERNEL_P1
+      USE GAMMA_MIN_MOD
+      IMPLICIT NONE
+      INTEGER, INTENT(IN) :: iu, Nmz, Nmg, Nz, Ng, Nv
+      CHARACTER(LEN=*), INTENT(IN) :: arquivo
+      DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*), m, m1, m2, mu, kappa, Mtot
+      DOUBLE PRECISION, INTENT(IN) :: X(Nz), Y(Ng), W(Nv)
+      LOGICAL, INTENT(IN) :: USAR_GMIN
+
+      INTEGER :: i, j, p, q, r
+      INTEGER(KIND=8) :: n_neg(4), n_tot
+      DOUBLE PRECISION :: g, z, zq, v, gpf, d, dmin(4), gmin_lo, gmin_hi
+      CHARACTER(LEN=12), PARAMETER :: rot(4) = (/ 'D0          ', 'LHS         ', 'Du/(1+z)    ', 'Dd/(1-z)    ' /)
+
+      dmin  = HUGE(1.d0)
+      n_neg = 0
+      n_tot = 0
+      gmin_lo = MIN(GAMMA_MIN_EF(-1.d0, m1, m2, USAR_GMIN), GAMMA_MIN_EF(1.d0, m1, m2, USAR_GMIN))
+      gmin_hi = MAX(GAMMA_MIN_EF(-1.d0, m1, m2, USAR_GMIN), GAMMA_MIN_EF(1.d0, m1, m2, USAR_GMIN))
+
+      do i = 1, Nmg
+         do j = 1, Nmz
+            g = gv(i)
+            z = zv(j)
+            d = DENOM_D0(z, g, m1, m2, Mtot)
+            dmin(1) = MIN(dmin(1), d)
+            IF (.NOT. (d .GT. 0.d0)) n_neg(1) = n_neg(1) + 1
+            do p = 1, Ng
+               !Lado esquerdo: gamma + gamma~ + gamma_min(z) + (1-z^2) kappa^2 + z^2 mbar^2
+               d = g + Y(p) + GAMMA_MIN_EF(z, m1, m2, USAR_GMIN) + (1.d0 - z**2)*kappa**2 + m**2*z**2
+               dmin(2) = MIN(dmin(2), d)
+               IF (.NOT. (d .GT. 0.d0)) n_neg(2) = n_neg(2) + 1
+               do q = 1, Nz
+                  do r = 1, Nv
+                     v = W(r)
+                     n_tot = n_tot + 1
+                     !Ramo superior (z' de z ate 1)
+                     zq  = (1.d0-z)*X(q)+z
+                     gpf = Y(p) + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)
+                     d = DENOM_DU(z, zq, g, gpf, v, m1, m2, mu, Mtot)/(1.d0 + z)
+                     dmin(3) = MIN(dmin(3), d)
+                     IF (.NOT. (d .GT. 0.d0)) n_neg(3) = n_neg(3) + 1
+                     !Ramo inferior (z' de -1 ate z)
+                     zq  = (z+1.d0)*X(q)-1.d0
+                     gpf = Y(p) + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)
+                     d = DENOM_DD(z, zq, g, gpf, v, m1, m2, mu, Mtot)/(1.d0 - z)
+                     dmin(4) = MIN(dmin(4), d)
+                     IF (.NOT. (d .GT. 0.d0)) n_neg(4) = n_neg(4) + 1
+                  end do
+               end do
+            end do
+         end do
+      end do
+
+      OPEN(UNIT=iu, FILE=arquivo, STATUS='REPLACE')
+      WRITE(iu,'(A)') '# Minimos dos denominadores nos pontos de colocacao/quadratura (devem ser > 0)'
+      WRITE(iu,'(A,L1,A,2ES16.7)') '# USAR_GMIN = ', USAR_GMIN, '   gamma_min em [-1,1]: min, max = ', gmin_lo, gmin_hi
+      WRITE(iu,'(A,I0)') '# pontos (i,j,p,q,r) por ramo = ', n_tot
+      WRITE(iu,'(A)') '# denominador         minimo            n_nao_positivos'
+      do i = 1, 4
+         WRITE(iu,'(A12,2X,ES24.15,2X,I0)') rot(i), dmin(i), n_neg(i)
+         WRITE(*,'(A,A12,A,ES16.7,A,I0)') '   denominador ', rot(i), ' minimo = ', dmin(i), '   nao positivos: ', n_neg(i)
+      end do
+      CLOSE(iu)
+      END SUBROUTINE CHECA_DENOMINADORES
+
 
 ! ---------------SUBROUTINE BUILD_ZMATRIX-----------------
 ! BUILD_ZMATRIX
@@ -701,10 +792,13 @@
 ! -----------------------------------------------------------------------
       SUBROUTINE BUILD_ZMATRIX(zv, gv, Nmz, Nmg, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
                                X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
-                               ZMATRIX, XMATRIX, kernel_type)
+                               ZMATRIX, XMATRIX, kernel_type, USAR_GMIN)
       USE OMP_LIB
       USE KERNEL_P1               !KERNEL_UPPER_*, KERNEL_LOWER_* (kernel.f90)
+      USE GAMMA_MIN_MOD
       IMPLICIT NONE
+      LOGICAL, INTENT(IN) :: USAR_GMIN             !gamma' = gamma~ + gamma_min(z')
+      DOUBLE PRECISION :: gpf, gmz                  !gamma' fisico no kernel; gamma_min(z)
 
       INTEGER, INTENT(IN) :: Nmz, Nmg, NMA, Nz, Ng, Nv
       DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*)
@@ -777,7 +871,7 @@
 !=======================================================================
 !$OMP PARALLEL DO DEFAULT(SHARED) &
 !$OMP   PRIVATE(i, j, k, l, p, q, r, index1, index2, &
-!$OMP           g, z, gp, dgp, v, dv, zq, dzq, peso, &
+!$OMP           g, z, gp, dgp, v, dv, zq, dzq, peso, gpf, gmz, &
 !$OMP           SPLz, SPLg, &
 !$OMP           contrib_escu, contrib_escd, &
 !$OMP           contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku, &
@@ -788,6 +882,7 @@
            do j=1,Nmz
               g=gv(i)
               z=zv(j)
+              gmz = GAMMA_MIN_EF(z, m1, m2, USAR_GMIN)         !lado esquerdo: gamma' = gamma~ + gamma_min(z)
               index1 = (j-1)*Nmg + i           !Juntei cada ponto (gi, zj) num vetor coluna de dimensão Nmg*Nmz
               do k=1,Nmg
                 do l=1, Nmz
@@ -808,6 +903,7 @@
         ! theta z’ variando de z até 1
                      dzq=(1.d0-z)*dX(q)
                      zq=(1.d0-z)*X(q)+z
+                     gpf = gp + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)   !gamma' = gamma~ + gamma_min(z')
 
                      call SPLMD1 (zv,Nmz,zq,SPLz)
                      call SPLMD2 (gv,Nmg,gp,SPLg)
@@ -817,13 +913,13 @@
 
         !----------------- Ramo superior: avaliacao do kernel -----------------
                      IF (kernel_type .EQ. 'v') THEN
-                        contrib_C0_ku = KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
-                        contrib_f1_ku = KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_C0_ku = KERNEL_UPPER_C0(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_f1_ku = KERNEL_UPPER_F1(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI) * peso
                         contrib_escu  = 0.d0
                         zmatrix (index1, index2) = zmatrix (index1, index2) &
                                                    - contrib_C0_ku + contrib_f1_ku
                      ELSE
-                        contrib_escu  = KERNEL_UPPER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_escu  = KERNEL_UPPER_ESC(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI) * peso
                         contrib_C0_ku = 0.d0
                         contrib_f1_ku = 0.d0
                         zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escu
@@ -832,19 +928,20 @@
         ! theta z’ variando de -1 até z
                      dzq=(z+1.d0)*dx(q)
                      zq=(z+1.d0)*x(q)-1.d0
+                     gpf = gp + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)   !gamma' = gamma~ + gamma_min(z')
                      call SPLMD1 (zv,Nmz,zq,SPLz)
 
                      peso = splg(k)*splz(l)*dzq*dgp*dv
 
         !----------------- Ramo inferior: avaliacao do kernel -----------------
                      IF (kernel_type .EQ. 'v') THEN
-                        contrib_C0_kd = KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
-                        contrib_f1_kd = KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_C0_kd = KERNEL_LOWER_C0(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_f1_kd = KERNEL_LOWER_F1(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI) * peso
                         contrib_escd  = 0.d0
                         zmatrix (index1, index2) = zmatrix (index1, index2) &
                                                    - contrib_C0_kd + contrib_f1_kd
                      ELSE
-                        contrib_escd  = KERNEL_LOWER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI) * peso
+                        contrib_escd  = KERNEL_LOWER_ESC(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI) * peso
                         contrib_C0_kd = 0.d0
                         contrib_f1_kd = 0.d0
                         zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escd
@@ -856,7 +953,7 @@
         !Lado Esquerdo
                         call SPLMD1 (zv,Nmz,z,SPLz)
                         xmatrix (index1, index2) = xmatrix (index1, index2) + &
-                        1.0d0 / ((g +gp + ((1-z**2)*kappa**2) + m**2*z**2)**2)*splg(k)*splz(l)*dgp
+                        1.0d0 / ((g +gp + gmz + ((1-z**2)*kappa**2) + m**2*z**2)**2)*splg(k)*splz(l)*dgp
                         end do
 
                enddo
@@ -910,9 +1007,12 @@
       SUBROUTINE TERMOS_P1(iu, zv, gv, Nmz, Nmg, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
                            X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
                            ZMATRIX, XMATRIX, kernel_type, &
-                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg, USAR_GMIN)
       USE KERNEL_P1
+      USE GAMMA_MIN_MOD
       IMPLICIT NONE
+      LOGICAL, INTENT(IN) :: USAR_GMIN             !gamma' = gamma~ + gamma_min(z')
+      DOUBLE PRECISION :: gpf, gmz                  !gamma' fisico no kernel; gamma_min(z)
       INTEGER, INTENT(IN) :: iu, Nmz, Nmg, NMA, Nz, Ng, Nv
       DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*)
       DOUBLE PRECISION, INTENT(IN) :: m, m1, m2, mu, kappa, Mtot, PI
@@ -937,6 +1037,7 @@
 
       g   = gv(i_dbg)
       z   = zv(j_dbg)
+      gmz = GAMMA_MIN_EF(z, m1, m2, USAR_GMIN)
       gp  = Y(p_dbg)
       dgp = dY(p_dbg)
       v   = W(r_dbg)
@@ -970,9 +1071,10 @@
       ELSE
          dzq = (1.d0-z)*dX(q_dbg)
          zq  = (1.d0-z)*X(q_dbg)+z
+         gpf = gp + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)
          call SPLMD1 (zv,Nmz,zq,splz)
          peso  = splg(k_dbg)*splz(l_dbg)*dzq*dgp*dv
-         Du    = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+         Du    = DENOM_DU(z, zq, g, gpf, v, m1, m2, mu, Mtot)
          WRITE(iu,'(A,ES24.15)') " zq      = ", zq
          WRITE(iu,'(A,ES24.15)') " dzq     = ", dzq
          WRITE(iu,'(A,ES24.15)') " Du      = ", Du
@@ -981,8 +1083,8 @@
          WRITE(iu,'(A,ES24.15)') " peso (splines*jacob.*Gauss) = ", peso
          IF (kernel_type .EQ. 'v') THEN
             Co_ku = COEF_C0_U(z, zq, g, v, m2, Mtot)
-            kC0   = KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-            kF1   = KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            kC0   = KERNEL_UPPER_C0(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI)
+            kF1   = KERNEL_UPPER_F1(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI)
             WRITE(iu,'(A,ES24.15)') " Co_ku   = ", Co_ku
             WRITE(iu,*) "--- KERNEL_UPPER_C0 / KERNEL_UPPER_F1 ---"
             WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_C0 (sem peso) = ", kC0
@@ -991,7 +1093,7 @@
             WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_F1 (com peso) = ", kF1*peso
             WRITE(iu,'(A,ES24.15)') " -C0 + f1 (com peso, entra na zmatrix) = ", (kF1 - kC0)*peso
          ELSE
-            kESC = KERNEL_UPPER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            kESC = KERNEL_UPPER_ESC(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI)
             WRITE(iu,'(A,ES24.15)') " (1+z)**2 = ", (1.d0+z)**2
             WRITE(iu,*) "--- KERNEL_UPPER_ESC ---"
             WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_ESC (sem peso) = ", kESC
@@ -1007,9 +1109,10 @@
       ELSE
          dzq = (z+1.d0)*dX(q_dbg)
          zq  = (z+1.d0)*X(q_dbg)-1.d0
+         gpf = gp + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)
          call SPLMD1 (zv,Nmz,zq,splz)
          peso  = splg(k_dbg)*splz(l_dbg)*dzq*dgp*dv
-         Dd    = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+         Dd    = DENOM_DD(z, zq, g, gpf, v, m1, m2, mu, Mtot)
          WRITE(iu,'(A,ES24.15)') " zq      = ", zq
          WRITE(iu,'(A,ES24.15)') " dzq     = ", dzq
          WRITE(iu,'(A,ES24.15)') " Dd      = ", Dd
@@ -1018,8 +1121,8 @@
          WRITE(iu,'(A,ES24.15)') " peso (splines*jacob.*Gauss) = ", peso
          IF (kernel_type .EQ. 'v') THEN
             Co_kd = COEF_C0_D(z, zq, g, v, m1, Mtot)
-            kC0   = KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-            kF1   = KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            kC0   = KERNEL_LOWER_C0(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI)
+            kF1   = KERNEL_LOWER_F1(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI)
             WRITE(iu,'(A,ES24.15)') " Co_kd   = ", Co_kd
             WRITE(iu,*) "--- KERNEL_LOWER_C0 / KERNEL_LOWER_F1 ---"
             WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_C0 (sem peso) = ", kC0
@@ -1028,7 +1131,7 @@
             WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_F1 (com peso) = ", kF1*peso
             WRITE(iu,'(A,ES24.15)') " -C0 + f1 (com peso, entra na zmatrix) = ", (kF1 - kC0)*peso
          ELSE
-            kESC = KERNEL_LOWER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            kESC = KERNEL_LOWER_ESC(z, zq, g, gpf, v, m1, m2, mu, Mtot, PI)
             WRITE(iu,'(A,ES24.15)') " (1-z)**2 = ", (1.d0-z)**2
             WRITE(iu,*) "--- KERNEL_LOWER_ESC ---"
             WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_ESC (sem peso) = ", kESC
@@ -1038,7 +1141,7 @@
 
       !---------------- Lado esquerdo (xmatrix) ----------------
       call SPLMD1 (zv,Nmz,z,splz)
-      denom_x = (g + gp + ((1-z**2)*kappa**2) + m**2*z**2)**2
+      denom_x = (g + gp + gmz + ((1-z**2)*kappa**2) + m**2*z**2)**2
       WRITE(iu,*) ""
       WRITE(iu,*) "=== LADO ESQUERDO (xmatrix) em gp(p_dbg) ==="
       WRITE(iu,'(A,ES24.15)') " denominador             = ", denom_x
@@ -1075,10 +1178,13 @@
 ! -----------------------------------------------------------------------
       SUBROUTINE BUILD_ZMATRIX_P2(zv, gv, Nmz, Nmg, NMA, m1, m2, mu, Mtot, zeta, &
                                   X, dX, Y, dY, W, dW, T, dT, Nz, Ng, Nv, Nu, &
-                                  Z2REG, Z2DEL, ok, err)
+                                  Z2REG, Z2DEL, ok, err, USAR_GMIN)
       USE OMP_LIB
       USE KERNEL_P2_ZETA
+      USE GAMMA_MIN_MOD
       IMPLICIT NONE
+      LOGICAL, INTENT(IN) :: USAR_GMIN             !gamma' = gamma~ + gamma_min(z')
+      DOUBLE PRECISION :: gmq, gmz                  !gamma_min(z') e gamma_min(z)
 
       INTEGER, INTENT(IN) :: Nmz, Nmg, NMA, Nz, Ng, Nv, Nu
       DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*)
@@ -1112,13 +1218,14 @@
         err = 0
 
 !$OMP PARALLEL DO DEFAULT(SHARED) &
-!$OMP   PRIVATE(i, j, k, l, p, q, ramo, index1, g, z, zq, dzq, valor, ok_pt, &
+!$OMP   PRIVATE(i, j, k, l, p, q, ramo, index1, g, z, zq, dzq, valor, ok_pt, gmq, gmz, &
 !$OMP           splz, tmp) &
 !$OMP   REDUCTION(.AND.:ok) COLLAPSE(2) SCHEDULE(DYNAMIC)
         do i = 1, Nmg !z
            do j = 1, Nmz !gamma
               g = gv(i)
               z = zv(j)
+              gmz = GAMMA_MIN_EF(z, m1, m2, USAR_GMIN)
               index1 = (j-1)*Nmg + i
 
         !---------------- Parte regular: dois ramos em z' ----------------
@@ -1127,15 +1234,17 @@
                     IF (ramo .EQ. 1) THEN
                        dzq = (1.d0-z)*dX(q)
                        zq  = (1.d0-z)*X(q)+z
+                       gmq = GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)   !gamma' = gamma~ + gamma_min(z')
                     ELSE
                        dzq = (z+1.d0)*dX(q)
                        zq  = (z+1.d0)*X(q)-1.d0
+                       gmq = GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)   !gamma' = gamma~ + gamma_min(z')
                     END IF
                     call SPLMD1 (zv,Nmz,zq,splz)
 
                     tmp = 0.d0
                     do p = 1, Ng !gamma'
-                       CALL P2_REG(ramo, g, z, Y(p), zq, m1, m2, mu, Mtot, zeta, &
+                       CALL P2_REG(ramo, g, z, Y(p) + gmq, zq, m1, m2, mu, Mtot, zeta, &
                                    W, dW, Nv, T, dT, Nu, valor, ok_pt)
                        IF (.NOT. ok_pt) THEN
                           ok = .FALSE.
@@ -1159,7 +1268,7 @@
               call SPLMD1 (zv,Nmz,z,splz)
               tmp = 0.d0
               do p = 1, Ng
-                 CALL P2_DELTA(g, z, Y(p), m1, m2, mu, Mtot, zeta, W, dW, Nv, valor, ok_pt)
+                 CALL P2_DELTA(g, z, Y(p) + gmz, m1, m2, mu, Mtot, zeta, W, dW, Nv, valor, ok_pt)
                  IF (.NOT. ok_pt) THEN
                     ok = .FALSE.
 !$OMP CRITICAL (ERRO_P2)
@@ -1193,9 +1302,12 @@
 ! -----------------------------------------------------------------------
       SUBROUTINE TERMOS_P2(iu, zv, gv, Nmz, Nmg, NMA, m1, m2, mu, Mtot, zeta, PI, &
                            X, Y, dY, W, dW, T, dT, Nz, Ng, Nv, Nu, Z2REG, Z2DEL, &
-                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg, USAR_GMIN)
       USE KERNEL_P2_ZETA
+      USE GAMMA_MIN_MOD
       IMPLICIT NONE
+      LOGICAL, INTENT(IN) :: USAR_GMIN             !gamma' = gamma~ + gamma_min(z')
+      DOUBLE PRECISION :: gpf                       !gamma' fisico no kernel
       INTEGER, INTENT(IN) :: iu, Nmz, Nmg, NMA, Nz, Ng, Nv, Nu
       DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*), m1, m2, mu, Mtot, zeta, PI
       DOUBLE PRECISION, INTENT(IN) :: X(Nz), Y(Ng), dY(Ng), W(Nv), dW(Nv), T(Nu), dT(Nu)
@@ -1230,20 +1342,22 @@
       do ramo = 1, -1, -2
          IF (ramo .EQ. 1) THEN
             zq = (1.d0-z)*X(q_dbg)+z
+            gpf = gp + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)
             WRITE(iu,*) "--- ramo superior: z' de z ate 1 (polo k_u) ---"
          ELSE
             zq = (z+1.d0)*X(q_dbg)-1.d0
+            gpf = gp + GAMMA_MIN_EF(zq, m1, m2, USAR_GMIN)
             WRITE(iu,*) "--- ramo inferior: z' de -1 ate z (polo k_d) ---"
          END IF
          KDc = KD_P2(z, zq, v, Mtot)
-         lD  = LD_P2(z, zq, g, gp, v, u, m1, m2, mu, Mtot, zeta)
+         lD  = LD_P2(z, zq, g, gpf, v, u, m1, m2, mu, Mtot, zeta)
          IF (ramo .EQ. 1) THEN
             c  = 1.d0 + z
-            D2 = DENOM_DU2(z, zq, g, gp, v, u, m1, m2, mu, Mtot, zeta)
+            D2 = DENOM_DU2(z, zq, g, gpf, v, u, m1, m2, mu, Mtot, zeta)
             Nt = NUM_P2(kut, c, z, zq, g, v, D2, Mtot)
          ELSE
             c  = 1.d0 - z
-            D2 = DENOM_DD2(z, zq, g, gp, v, u, m1, m2, mu, Mtot, zeta)
+            D2 = DENOM_DD2(z, zq, g, gpf, v, u, m1, m2, mu, Mtot, zeta)
             Nt = NUM_P2(kdt, c, z, zq, g, v, D2, Mtot)
          END IF
          WRITE(iu,'(A,ES24.15)') " zq      = ", zq
@@ -1261,11 +1375,11 @@
             WRITE(iu,'(A,ES24.15)') " -(1-z) v^2 N~_kd/(2 D0 Dd2^3) = ", -c*v**2*Nt/(2.d0*D0*D2**3)
          END IF
          Wv(1) = v;  dWv(1) = 1.d0
-         CALL P2_REG(ramo, g, z, gp, zq, m1, m2, mu, Mtot, zeta, Wv, dWv, 1, T, dT, Nu, val, ok_pt)
+         CALL P2_REG(ramo, g, z, gpf, zq, m1, m2, mu, Mtot, zeta, Wv, dWv, 1, T, dT, Nu, val, ok_pt)
          WRITE(iu,'(A,ES24.15)') " v^2(1-v)/(2D0) Int dt N/f^3 (v acima) = ", val
       end do
       WRITE(iu,*) "--- termo delta(z'-z) ---"
-      CALL P2_DELTA(g, z, gp, m1, m2, mu, Mtot, zeta, W, dW, Nv, val, ok_pt)
+      CALL P2_DELTA(g, z, gp + GAMMA_MIN_EF(z, m1, m2, USAR_GMIN), m1, m2, mu, Mtot, zeta, W, dW, Nv, val, ok_pt)
       WRITE(iu,'(A,ES24.15)') " P2_DELTA(g, z, gp)     = ", val
       WRITE(iu,'(A,ES24.15)') " Z2REG(index1,index2)   = ", Z2REG(index1,index2)
       WRITE(iu,'(A,ES24.15)') " Z2DEL(index1,index2)   = ", Z2DEL(index1,index2)

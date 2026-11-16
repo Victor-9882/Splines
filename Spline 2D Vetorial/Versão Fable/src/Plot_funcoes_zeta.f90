@@ -1,3 +1,9 @@
+!Limitante inferior gamma_min(z) do suporte de g (MODULE GAMMA_MIN_MOD): mesma
+!definicao usada pelo programa principal. Aqui gamma' = gamma~ + gamma_min(z)
+!entra no denominador do propagador (Psi, u(xi), TMD); as splines sao em gamma~.
+      INCLUDE 'gamma_min.f90'
+
+    USE GAMMA_MIN_MOD
     IMPLICIT NONE
 
     ! -----------------------------------------------------------------
@@ -100,12 +106,13 @@
     DOUBLE PRECISION   :: zeta                 ! calibre (so lido; os plots nao dependem do kernel)
     INTEGER            :: Nu
     LOGICAL            :: DEBUG_TERMOS, SALVAR_MATRIZES
+    LOGICAL            :: usar_gmin, CHECAR_DENOM   ! usar_gmin: gamma' = gamma~ + gamma_min(z)
     INTEGER            :: Nz_plot, Ng_plot, Nv_plot
     DOUBLE PRECISION   :: xi_num, xi_den
     NAMELIST /saida/ pasta
     NAMELIST /teste/ nome, kernel_type, NMG, NMZ, Nz, Ng, Nv, Nu, &
                      Mtot, m1, m2, mu, zeta, e, A_z, A_g, gamma_max, z_borda, &
-                     DEBUG_TERMOS, SALVAR_MATRIZES
+                     DEBUG_TERMOS, SALVAR_MATRIZES, usar_gmin, CHECAR_DENOM
     NAMELIST /plot/ Nz_plot, Ng_plot, Nv_plot, z_fixo, gamma_fixo, &
                     gamma_den, xi_den, xi_num, gamma_num
 
@@ -187,6 +194,9 @@
             PRINT *, 'ERRO: nao foi possivel abrir ', TRIM(prefixo)//'parametros.dat'
             STOP 1
         END IF
+        ! Resultados antigos (sem usar_gmin em parametros.dat) foram calculados com gamma' >= 0
+        usar_gmin = .FALSE.
+        CHECAR_DENOM = .FALSE.
         READ(20, NML=teste)
         CLOSE(20)
 
@@ -349,7 +359,8 @@
           end do
           
           ! Denominador do propagador: [gamma + gamma' + m^2*z^2 + (1-z^2)*kappa^2]
-          D_den = gamma_den + gammap + (m**2)*(z_den**2) + (1.d0 - z_den**2)*(kappa**2)
+          D_den = gamma_den + gammap + GAMMA_MIN_EF(z_den, m1, m2, usar_gmin) &
+                  + (m**2)*(z_den**2) + (1.d0 - z_den**2)*(kappa**2)
           
           ! Acumula a integral de dgamma' * g / [Propagador]^2
           psi_den = psi_den + (g_val * dgp) / (D_den**2)
@@ -383,7 +394,8 @@
                   end do
               end do
               
-              D_num = gamma_plot + gammap + (m**2)*(z_num**2) + (1.d0 - z_num**2)*(kappa**2)
+              D_num = gamma_plot + gammap + GAMMA_MIN_EF(z_num, m1, m2, usar_gmin) &
+                      + (m**2)*(z_num**2) + (1.d0 - z_num**2)*(kappa**2)
               
               psi_num = psi_num + (g_val * dgp) / (D_num**2)
           end do
@@ -434,7 +446,8 @@
               end do
               
               ! Denominador do propagador usando gamma_num fixo e z_plot variável
-              D_num = gamma_num + gammap + (m**2)*(z_plot**2) + (1.d0 - z_plot**2)*(kappa**2)
+              D_num = gamma_num + gammap + GAMMA_MIN_EF(z_plot, m1, m2, usar_gmin) &
+                      + (m**2)*(z_plot**2) + (1.d0 - z_plot**2)*(kappa**2)
               
               ! Acumula a integral
               psi_num = psi_num + (g_val * dgp) / (D_num**2)
@@ -518,7 +531,7 @@
                       end do
                   end do
 
-                  D_num = gamma_ext + gammap + (m**2)*(z_ext**2) &
+                  D_num = gamma_ext + gammap + GAMMA_MIN_EF(z_ext, m1, m2, usar_gmin) + (m**2)*(z_ext**2) &
                           + (1.d0 - z_ext**2)*(kappa**2)
 
                   psi_num = psi_num + (g_val * dgp) / (D_num**2)
@@ -565,7 +578,7 @@
                       end do
                   end do
 
-                  D_num = gamma_plot + gammap + (m**2)*(z_plot**2) &
+                  D_num = gamma_plot + gammap + GAMMA_MIN_EF(z_plot, m1, m2, usar_gmin) + (m**2)*(z_plot**2) &
                           + (1.d0 - z_plot**2)*(kappa**2)
 
                   psi_num = psi_num + (g_val * dgp) / (D_num**2)
@@ -623,7 +636,7 @@
                       end do
                   end do
 
-                  D_num = gamma_ext + gammap + (m**2)*(z_plot**2) &
+                  D_num = gamma_ext + gammap + GAMMA_MIN_EF(z_plot, m1, m2, usar_gmin) + (m**2)*(z_plot**2) &
                           + (1.d0 - z_plot**2)*(kappa**2)
 
                   psi_num = psi_num + (g_val * dgp) / (D_num**2)
@@ -680,7 +693,7 @@
                       end do
                   end do
 
-                  D_num = gamma_plot + gammap + (m**2)*(z_ext**2) &
+                  D_num = gamma_plot + gammap + GAMMA_MIN_EF(z_ext, m1, m2, usar_gmin) + (m**2)*(z_ext**2) &
                           + (1.d0 - z_ext**2)*(kappa**2)
 
                   psi_num = psi_num + (g_val * dgp) / (D_num**2)
