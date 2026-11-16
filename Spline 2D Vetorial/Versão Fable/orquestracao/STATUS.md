@@ -1,14 +1,14 @@
 # STATUS — orquestração IC kernel vetorial
 
-Pasta de trabalho: `Versão Fable/` · Fontes de referência (somente leitura): `../Versão Original/`
-Fontes atuais: `2D_Spline_Vetorial_Diferentes_zeta_omp.f90`, `kernel.f90`, `Plot_funcoes_zeta.f90`, `inputs.dat`
+Pasta de trabalho: `Versão Fable/` · Referência somente leitura: `../Versão Original/` (intacta)
+Regra alterada pelo Victor em 16/11/2026: executar o plano inteiro sem pedir aprovação por fase. Continuam valendo: nada apagado/sobrescrito/renomeado fora do que foi gerado aqui, nada fora da pasta de trabalho, nenhum job submetido.
 
 | tarefa | estado | branch/commit | próximo passo |
 |---|---|---|---|
-| Fase 0 — mapa do código | concluída (16/11) | — | `MAPA_CODIGO.md` + `relatorios/T0_mapa.md`; revisado pelo orquestrador (seção 8) |
-| Fase 0 — baseline | proposta enviada; aguardando aprovação | — | decidir limite inferior de γ' (0.d0 do HEAD vs 0.22 não commitado) e malha |
-| T1 — γ_min(z) | não iniciada | — | plano no checkpoint da Fase 0 |
-| T5 — organização de saídas | não iniciada | — | plano no checkpoint da Fase 0 |
-| T4 — .agr automático | não iniciada | — | depende de T5 |
-| T2 — convergência local | não iniciada | — | depende de T1, T4, T5 |
-| T3 — plano do cluster | não iniciada | — | depende de T2 |
+| Fase 0 — mapa | concluída | `fable/fase0` 7cb9351 | — |
+| Fase 0 — baseline | concluída (`baseline.md`) | `fable/fase0` b95e405 | — |
+| T1 — γ_min(z) | concluída, testes ok (`relatorios/T1_gamma_min.md`) | `fable/t1-gamma-min` 4fcb8f0 | confirmar convenção de sinal com o orientador; merge em `main` fica com o Victor |
+| T5 — saídas | concluída (`relatorios/T5_saidas.md`) | `tools/run.py` em `fable/fase0` | — |
+| T4 — .agr | concluída (`relatorios/T4_agr.md`) | `tools/agr.py`, `plot_run.py`, `plot_compare.py` | — |
+| T2 — convergência local | concluída (`relatorios/T2_convergencia.md`): 91 rodadas; λ **não** converge em γ_max, `e` e `z_borda` | `fable/t2-t3` | levar ao orientador os três pontos de não convergência |
+| T3 — plano do cluster | concluída (`cluster/plano.md`, `manifest.csv` com 110 jobs, ~178 CPU·h, dry-run ok); **nada submetido** | `fable/t2-t3` | Victor informar cluster (partição, tempo, módulos) e ajustar `job_array.slurm` |

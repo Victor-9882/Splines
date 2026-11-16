@@ -278,7 +278,8 @@ def _prec_sig(lo, hi, tick):
 
 def _eixo(nome, label, major, minor_ticks, label_place, perp, log, prec=2):
     # rótulo longo no eixo y: layout 'perp' (horizontal) estouraria a margem
-    if perp and _comprimento_visivel(label) > 7:
+    # idem quando os números dos ticks são largos (3+ casas): o rótulo horizontal colide com eles
+    if perp and (_comprimento_visivel(label) > 7 or (not log and prec >= 3)):
         perp = False
     p = "@    %saxis  " % nome
     L = [p + "on", p + "type zero false", p + "offset 0.000000 , 0.000000",

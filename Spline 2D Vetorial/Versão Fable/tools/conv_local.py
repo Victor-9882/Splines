@@ -53,6 +53,12 @@ def varreduras():
         vs.append(('%s_Nu_zeta0.5' % caso, 'Nu', [dict(base, zeta=0.5, Nu=v) for v in (12, 24, 36)]))
         # calibre
         vs.append(('%s_zeta' % caso, 'zeta', [dict(base, zeta=z) for z in (0.0, 0.5, 1.0, 2.0, 3.0)]))
+        # gamma_max com a densidade de nós em gamma mantida (NMG proporcional a gamma_max)
+        vs.append(('%s_gmax_dens' % caso, 'gamma_max',
+                   [dict(base, gamma_max=gm, NMG=n) for gm, n in ((3.0, 16), (4.5, 24), (6.0, 32))]))
+        # posição dos nós extremos em z e regulador da diagonal de X
+        vs.append(('%s_z_borda' % caso, 'z_borda', [dict(base, z_borda=zb) for zb in (0.9, 0.99, 0.999, 0.9999, 0.99999, 0.9999999)]))
+        vs.append(('%s_e' % caso, 'e', [dict(base, e=e) for e in (1e-12, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2)]))
     # físicos (estabilidade): razão de massas com a ligação do káon; ligação e mu com massas iguais
     vs.append(('fis_razao', 'razao', [dict(razao(r, KAON['Mtot']), mu=KAON['mu']) for r in (1.0, 1.5, 2.309090909090909)]))
     vs.append(('fis_Mtot', 'Mtot', [dict(Mtot=M) for M in (1.0, 1.367, 1.6, 1.9, 1.99)]))
@@ -138,7 +144,7 @@ def analisar(png):
             dl = abs(lam - ant[0]) / abs(lam) if ant else float('nan')
             dx = abs(xi - ant[1]) if ant else float('nan')
             linhas_md.append('| %s | %.10f | %s | %.6f | %s | %.6f | %.1e | %+.4f | %+.4f | %s | %s | %.1f |' % (
-                ('%.4g' % num(l, par)), lam, '—' if ant is None else '%.1e' % dl, xi,
+                ('%.8g' % num(l, par)), lam, '—' if ant is None else '%.1e' % dl, xi,
                 '—' if ant is None else '%.1e' % dx, num(l, 'norma_u'), num(l, 'assim_u'),
                 num(l, 'psi_z_borda_menos'), num(l, 'psi_z_borda_mais'), l.get('n_complexos', ''),
                 l.get('i_max', ''), num(l, 'tempo_s')))
@@ -146,8 +152,10 @@ def analisar(png):
         for y in ('lambda', 'xi_medio'):
             cmd = [sys.executable, os.path.join(RAIZ, 'tools', 'plot_compare.py'), 'conv', '--csv', caminho,
                    '--param', par, '--y', y, '--out', os.path.join(pasta, '%s_%s.agr' % (nome, y))]
+            if par == 'e':
+                cmd.append('--logx')
             subprocess.run(cmd + (['--png'] if png else []), capture_output=True, text=True)
-        if not nome.startswith('fis_') and not nome.endswith('_zeta'):
+        if not nome.startswith('fis_') and not nome.endswith(('_zeta', '_z_borda', '_e', '_gmax_dens')):
             cmd = [sys.executable, os.path.join(RAIZ, 'tools', 'plot_compare.py'), 'conv', '--csv', caminho,
                    '--param', par, '--y', 'lambda', '--logerr',
                    '--out', os.path.join(pasta, '%s_lambda_err.agr' % nome)]

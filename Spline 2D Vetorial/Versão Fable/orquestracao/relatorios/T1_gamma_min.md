@@ -5,7 +5,8 @@
 - Motivo: no código D0 = γ − (1−z²)M²/4 + m1²(1+z)/2 + m2²(1−z)/2 = γ + (1−z²)κ² + (Δ − z m̄)² (kernel.f90:43, 279), ou seja z=+1 ↔ m1 e z=−1 ↔ m2. O denominador natural de Nakanishi é γ'_nat + m1²(1+z')/2 + m2²(1−z')/2 − M²/4 − k² − p·k z' com γ'_nat ≥ 0; escrito com κ² dá γ' = γ'_nat + γ_min(z').
 - γ_min(+1) = m1² − m̄², γ_min(−1) = m2² − m̄²; γ_min(z) + z²m̄² = (z m̄ − Δ)² ≥ 0; D0 = γ + γ_min(z) + (1−z²)κ² + z²m̄².
 - Para m2 > m1 (todos os casos usados até aqui) coincide com a forma do artigo, −2 z m̄ |Δ| + Δ². Para m1 > m2 a forma com |Δ| quebraria a simetria m1↔m2; a com sinal a preserva (teste abaixo).
-- **Limite do teste de troca:** ele distingue "com sinal" de "|Δ|", mas não o sinal global do termo em z (Δ² + 2 z m̄ Δ também seria simétrico e também daria denominadores positivos). Esse sinal foi fixado pela estrutura de D0 acima. **Ponto para confirmar com o orientador.**
+- **Verificação numérica do sinal** (káon, malha B0, binário à parte com o sinal oposto, Δ² + 2 z m̄ Δ; `Testes/T1_gamma_min/*_sinal_oposto`): com o sinal adotado g(γ̃=0, z=±1)/max|g| = 0.002 e 0.004 e ψ(z=+1)/max = 0.025; com o sinal oposto g(0, z=+1) é o próprio máximo (em módulo) e ψ(z=+1)/max = 0.895; sem γ_min, 1.000 e 0.114. Só o sinal adotado faz g anular-se nas duas bordas.
+- **Limite do teste de troca:** ele distingue "com sinal" de "|Δ|", mas não o sinal global do termo em z (Δ² + 2 z m̄ Δ também seria simétrico e também daria denominadores positivos). Esse sinal foi fixado pela estrutura de D0 acima e pela verificação numérica anterior. **Ponto para confirmar com o orientador.**
 
 ## Implementação (variável deslocada γ̃ = γ' − γ_min(z') ∈ [0, γ_max])
 Base de splines, nós, colocação e quadratura em γ ficam iguais; `kernel.f90` não mudou (recebe γ' físico pelo argumento `gp`).

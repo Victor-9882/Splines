@@ -171,6 +171,8 @@ def cmd_conv(a):
         leg = "ref = " + _g(ref)
     else:
         leg = ""
+    if getattr(a, "logx", False):
+        kw["logx"] = True
     return _salva(a.out, [(xs, ys, leg, estilo)], xl, yl, a.png, **kw)
 
 
@@ -191,6 +193,7 @@ def main(argv=None):
     c.add_argument("--out", required=True)
     c.add_argument("--filter", nargs="*", action="extend", default=[])
     c.add_argument("--logerr", action="store_true")
+    c.add_argument("--logx", action="store_true", help="eixo x logarítmico (ex.: regulador e)")
     c.add_argument("--ref", type=float, default=None)
     c.add_argument("--png", action="store_true")
     a = ap.parse_args(argv)
