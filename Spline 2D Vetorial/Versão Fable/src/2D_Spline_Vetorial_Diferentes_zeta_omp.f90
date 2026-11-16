@@ -360,7 +360,7 @@
            gv(i+1)=YG(i)
         enddo
 
-        gv(1) = 0.22d0
+        gv(1) = 0.d0
         gv(nmg) = gamma_max
 
     !Preparação das Splines
@@ -371,7 +371,7 @@
         !X(q) e a variavel NORMALIZADA em [0,1]; o z' fisico em [-1,1] e obtido
         !pelos mapeamentos afins de cada ramo (ver BUILD_ZMATRIX).
         CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
-        CALL legauss(0.22d0,gamma_max,Ng,Y,dY,1.d-15)
+        CALL legauss(0.d0,gamma_max,Ng,Y,dY,1.d-15)
         CALL legauss(0.d0,1.d0,Nv,W,dW,1.d-15)
         !Variavel normalizada t em [0,1]; u = (1-v) t (so no termo 1-zeta)
         CALL legauss(0.d0,1.d0,Nu_ef,T,dT,1.d-15)
