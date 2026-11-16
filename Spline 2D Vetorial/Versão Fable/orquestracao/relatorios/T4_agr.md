@@ -66,3 +66,8 @@ Notas: `--png` em `overlay/conv` grava o PNG ao lado do .agr (mesmo nome). `plot
   `m2/m1 = 1` em todos (correto para esta fixture, mas indistinguível: use `--legend-key zeta`).
 - `conv --filter` compara numericamente (tol. 1e-9) ou como texto; valores repetidos de `--param` geram aviso.
 - Reta vertical em `plot_run`: azul tracejada; em `overlay`: pontilhada na cor da série (sem legenda própria).
+
+## Ajustes do orquestrador depois da entrega (16/11/2026)
+- `agr.py`: o rótulo do eixo y passa a ser rotacionado também quando os números dos ticks têm 3 ou mais casas (o rótulo horizontal colidia com eles nos gráficos de λ).
+- `plot_compare.py conv`: nova opção `--logx` (usada na varredura do regulador `e`).
+- Validado com dados reais: `plot_run.py --png` e `overlay`/`conv` em `Testes/T1_gamma_min/` e `Testes/convergencia_inicial/varreduras/` (64 `.agr`, todos aceitos pelo `gracebat`).
