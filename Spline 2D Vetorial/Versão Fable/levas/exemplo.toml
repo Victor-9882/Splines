@@ -1,0 +1,117 @@
+# =============================================================================
+# Modelo de leva para tools/leva.py  (formato TOML: "chave = valor", # comenta)
+#
+#   python3 tools/leva.py levas/exemplo.toml --listar     # confere o plano
+#   python3 tools/leva.py levas/exemplo.toml              # roda e gera tudo
+#   python3 tools/leva.py levas/exemplo.toml --so-graficos  # só refaz gráficos
+#
+# Copie este arquivo, mude o que quiser e apague o que não usar. Só [leva] pasta
+# é obrigatório; todo o resto tem padrão.
+# =============================================================================
+
+[leva]
+nome  = "zeta_massas_diferentes"   # nome da leva (padrão: nome do arquivo). Saídas em <pasta>/leva_<nome>/
+pasta = "Testes/2026-17-10_zeta_Massas_Diferentes 2"   # onde os runs são guardados: relativo à pasta "Versão Fable", ou absoluto
+threads = 10                  # threads OpenMP/MKL por rodada
+simultaneos = 1              # rodadas ao mesmo tempo (threads x simultaneos <= núcleos)
+pos_processamento = true     # roda bin/plot (u, psi, <xi>...). false = só lambda/alfa, mais rápido
+# tag = "v2"                 # sufixo nos run_id (para repetir combinações que já existem)
+
+[graficos]
+por_run = true               # gráficos de cada run (u, g, psi, D⊥) em <run>/plots/
+png = true                   # converte todo .agr em PNG (gracebat)
+ponto_decimal = false        # true = 0.5 nos PNG; false = 0,5 (locale pt_BR)
+
+# -----------------------------------------------------------------------------
+# Parâmetros fixos da leva: qualquer chave de &teste ou &plot.
+# O que não aparecer aqui fica no padrão B0 (ver LEIAME §12):
+#   m1=m2=1, Mtot=1.99, mu=0.5, zeta=1, NMG=NMZ=16, Ng=Nz=32, Nv=Nu=24,
+#   gamma_max=3, A_g=A_z=1, z_borda=0.9999999, e=1e-6, kernel_type="v"
+# -----------------------------------------------------------------------------
+[base]
+# reescrita do P^(2) com k~ = (1+-z) k e denominadores Du2/Dd2; massas diferentes
+kernel_type = "v"
+m1   = 1.0
+m2   = 1.1
+Mtot = 2.04
+mu   = 0.5
+NMG  = 20
+Ng = 40
+Nz = 40
+Nv = 30
+Nu = 30
+A_g = 1.0
+A_z = 1.0
+gamma_max = 3.0
+z_borda = 0.9999999
+e = 1.0e-6
+# &plot (iguais ao padrão, explícitos aqui)
+Nz_plot = 60
+Ng_plot = 60
+Nv_plot = 60
+z_fixo = 0.0
+gamma_fixo = 0.0
+gamma_den = 0.0
+xi_den = 0.5
+xi_num = 0.2
+gamma_num = 2.0
+# usar_gmin = true
+
+# -----------------------------------------------------------------------------
+# Grade: todas as combinações (produto cartesiano) das linhas abaixo.
+#   chave = [v1, v2, ...]              um parâmetro
+#   "A=B" = [v1, v2, ...]              A e B recebem o mesmo valor (ex.: malha quadrada)
+#   "A,B" = [[a1, b1], [a2, b2], ...]  pares que andam juntos (não cruzam entre si)
+# Aqui: 3 valores de zeta x NMZ = 28, 32, 36 = 9 rodadas (NMG = 20 fixo).
+# -----------------------------------------------------------------------------
+[grade]
+zeta = [1.0, 0.5, 0.0]
+NMZ  = [28, 32, 36]
+# "gamma_max,NMG" = [[3.0, 16], [4.5, 24], [6.0, 32]]
+
+# -----------------------------------------------------------------------------
+# Rodadas avulsas, somadas à grade (cada uma parte de [base]). Opcional.
+# -----------------------------------------------------------------------------
+# NMZ = 20 só para zeta = 1 (primeiro teste do inputs.dat original)
+[[rodada]]
+#zeta = 1.0
+#NMZ  = 20
+
+# -----------------------------------------------------------------------------
+# Convergência: observável x parâmetro. Um gráfico para cada combinação dos
+# OUTROS parâmetros que variam na leva (aqui: um por valor de zeta).
+#   param      parâmetro do eixo x (de &teste, ou "razao" = m2/m1)
+#   y          lista entre: lambda, alfa, xi_medio, norma_u
+#   erro_log   também |y - y_ref| em escala log (ref = último ponto, ou "ref")
+#   eixo_x_log eixo x em log (ex.: regulador e)
+#   filtro     usa só as rodadas com esses valores, ex.: { zeta = 1.0 }
+#   nome       prefixo dos arquivos (padrão conv_<param>)
+# -----------------------------------------------------------------------------
+[[convergencia]]
+param = "NMZ"
+y = ["lambda", "xi_medio", "alfa"]
+erro_log = false
+
+# -----------------------------------------------------------------------------
+# Sobreposição: curvas de várias rodadas no mesmo gráfico, uma por valor de
+# "variar"; um gráfico para cada combinação dos outros parâmetros que variam.
+#   grandezas  lista entre: u, g_gamma, g_z, psi_gamma, psi_z, dperp
+#   legenda    zeta, razao, run_id ou qualquer parâmetro (padrão: o próprio "variar")
+#   xi_medio   retas verticais em <xi> no gráfico de u (padrão true)
+# -----------------------------------------------------------------------------
+[[sobreposicao]]
+variar = "NMZ"
+grandezas = ["u", "dperp"]
+filtro = { zeta = 1.0 }
+
+[[sobreposicao]]
+variar = "zeta"
+grandezas = ["u", "dperp"]
+filtro = { NMZ = 36 }
+
+# -----------------------------------------------------------------------------
+# Colunas da tabela em leva_<nome>/relatorio.md (os parâmetros que variam
+# entram sempre). Qualquer coluna do resumo.csv.
+# -----------------------------------------------------------------------------
+[tabela]
+colunas = ["lambda", "alfa", "xi_medio", "norma_u", "lambda_2", "n_complexos", "tempo_s"]

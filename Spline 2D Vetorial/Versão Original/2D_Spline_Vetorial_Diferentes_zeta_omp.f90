@@ -1,5 +1,5 @@
-!Funcoes PURE do termo (1-zeta) do propagador vetorial (MODULE KERNEL_P2_ZETA)
-      INCLUDE 'kernel_P2_zeta.f90'
+!Funcoes PURE do kernel: P^(1) (MODULE KERNEL_P1) e termo (1-zeta) (MODULE KERNEL_P2_ZETA)
+      INCLUDE 'kernel.f90'
 
       PROGRAM SPLINE_VETORIAL
       USE OMP_LIB
@@ -8,14 +8,6 @@
 !=======================================================================
 ! Todos os parametros vem do arquivo de entrada (padrao: inputs.dat,
 ! ou o primeiro argumento da linha de comando), em formato NAMELIST:
-!
-!   &saida  pasta = '...' /          -> pasta onde tudo sera salvo
-!   &teste  ...  /                   -> um bloco por teste (N blocos)
-!
-! Cada bloco &teste herda os valores do bloco anterior; so o primeiro
-! precisa ser completo. Para cada teste sao gravados, dentro da pasta,
-! os arquivos <nome>_*.dat, alem de resumo.dat (uma linha por teste) e
-! uma copia do arquivo de entrada.
 !
 ! CALIBRE ARBITRARIO: o kernel e P^(1) - (1-zeta) P^(2). P^(1) (termo
 ! g_munu) e montado por BUILD_ZMATRIX exatamente como na versao zeta=1;
@@ -75,7 +67,7 @@
       DOUBLE PRECISION, PARAMETER :: TOL_ZETA = 1.D-14 !|1-zeta| abaixo disso: P^(2) nao e calculado
       DOUBLE PRECISION :: kappa                     !sqrt(m**2 - Mtot**2/4)
       DOUBLE PRECISION :: e                         !Regularizacao da diagonal de XMATRIX
-      DOUBLE PRECISION :: Alfa                      !Constante de acoplamento extraida de wr(1)
+      DOUBLE PRECISION :: Alfa                      !Constante de acoplamento extraida de wr(i_max)
 
 !===================== Parametros das malhas ===========================
       DOUBLE PRECISION :: A_z, A_g                  !Razao geometrica dos intervalos (G1D) em z e gamma
@@ -129,7 +121,7 @@
       LOGICAL :: P2_ATIVO                           !kernel 'v' e |1-zeta| >= TOL_ZETA
       LOGICAL :: ok_p2
       INTEGER :: err_p2(5)                          !Primeiro ponto (i,j,p,q,ramo) com f >= 0 ou nao finito
-      INTEGER :: i_max                              !Indice do maior autovalor real positivo
+      INTEGER :: i_max                              !Indice do maior autovalor real positivo (autovalor usado)
       DOUBLE PRECISION :: wr_max
 
         PI = DACOS(-1.D0)       !3.14159265358979323846264338
@@ -211,7 +203,8 @@
         WRITE(30,'(A)') '# Norma = pi*Int dxi Int dgamma |Psi|^2 (antes do reescalonamento):'
         WRITE(30,'(A)') '#   preenchida pelo programa de plot; NaN enquanto o plot nao rodar'
         WRITE(30,'(A)') '# Kernel P^(1) - (1-zeta) P^(2); Nu = pontos de Gauss em u (termo 1-zeta)'
-        WRITE(30,'(A)') '# wr_max = maior autovalor real positivo (DGGEV nao ordena; Alfa vem de wr(1))'
+        WRITE(30,'(A)') '# wr_max = maior autovalor real positivo; Alfa = 1/(16 pi wr_max) e o autovetor'
+        WRITE(30,'(A)') '#   gravado sao os dele (DGGEV nao ordena: linha "# <nome> AVISO" se nao for wr(1))'
         WRITE(30,'(A1,A60,6A6,A3,7A12,3A24,A12,A24)') '#', 'nome', 'NMG', 'NMZ', 'Nz', 'Ng', 'Nv', 'Nu', 'k', &
               'Mtot', 'm1', 'm2', 'mu', 'zeta', 'A_z', 'A_g', 'Alfa', 'wr(1)', 'wr_max', 'tempo(s)', 'Norma'
         FLUSH(30)
@@ -221,8 +214,9 @@
         WRITE(31,'(A,I4.4,"-",I2.2,"-",I2.2," ",I2.2,":",I2.2,":",I2.2)') &
               '# Rodada iniciada em ', data_hora(1:3), data_hora(5:7)
         WRITE(31,'(A)') '# dAlfa = Alfa - Alfa do teste anterior (0 no primeiro teste)'
+        WRITE(31,'(A)') '# wr_max = maior autovalor real positivo (o usado em Alfa); i = numero do teste'
         WRITE(31,'(A1,A3,6A6,A12,3A24,2X,A)') '#', 'i', 'NMG', 'NMZ', 'Nz', 'Ng', 'Nv', 'Nu', &
-              'zeta', 'Alfa', 'dAlfa', 'wr(1)', 'nome'
+              'zeta', 'Alfa', 'dAlfa', 'wr_max', 'nome'
         FLUSH(31)
         tem_ant = .FALSE.
         Alfa_ant = 0.d0
@@ -253,23 +247,28 @@
           WRITE(*,'(A,I0,A,I0,A,A)') " ===== Teste ", ii, " de ", NTESTES, ": ", TRIM(nome)
           CALL SYSTEM_CLOCK(T_INI, T_TAXA)
 
-     !Parâmetros derivados
+!===================== Incio Implementação =============================         
+   !Parâmetros derivados
           m = (m1 + m2)/2
           kappa = sqrt(m**2 - 0.25*Mtot**2)
           NMA   = NMG*NMZ
           LWORK = 10*NMA
           Nu_ef = Nu
+
+          !Liga a booliana se zeta for diferente de 1
           IF (Nu .LT. 0) Nu_ef = Nv
           P2_ATIVO = (kernel_type .EQ. 'v') .AND. (DABS(1.d0 - zeta) .GE. TOL_ZETA)
           IF (zeta .LT. 0.d0) WRITE(*,'(A)') &
              " AVISO: zeta < 0; a positividade dos denominadores de P^(2) so e garantida para zeta >= 0"
 
+         !Alocações
           ALLOCATE(XMATRIX(NMA,NMA), ZMATRIX(NMA,NMA), c(NMG,NMZ))
           ALLOCATE(ALPHAR(NMA), ALPHAI(NMA), BETA(NMA))
           ALLOCATE(WR(NMA), WI(NMA))
           ALLOCATE(VR(NMA,NMA), VL(NMA,2*NMA), WORK(LWORK))
           ALLOCATE(zv(NMZ+1), gv(NMG+1), XG(NMZ), YG(NMG))
 
+         !Arquivos
           prefixo = TRIM(pasta)//'/'//TRIM(nome)//'_'
           open (unit = 10, file = TRIM(prefixo)//"autovalores.dat",  STATUS="REPLACE")
           open (unit = 12, file = TRIM(prefixo)//"alfa.dat",         STATUS="REPLACE")
@@ -310,6 +309,7 @@
           WRITE(12, '(A,A)') " kernel_type: ", kernel_type
           WRITE(12, '(A,ES24.15,A,I0,A,L1)') " zeta: ", zeta, "  Nu: ", Nu_ef, "  P2: ", P2_ATIVO
 
+      !Parametros do COLLOC
             iw = 14
             N_intervalZ = (NMZ-1)/2
             N_intervalG = (NMG-1)/2
@@ -360,7 +360,7 @@
            gv(i+1)=YG(i)
         enddo
 
-        gv(1) = 0.d0
+        gv(1) = 0.22d0
         gv(nmg) = gamma_max
 
     !Preparação das Splines
@@ -371,9 +371,7 @@
         !X(q) e a variavel NORMALIZADA em [0,1]; o z' fisico em [-1,1] e obtido
         !pelos mapeamentos afins de cada ramo (ver BUILD_ZMATRIX).
         CALL legauss(0.d0,1.d0,Nz,X,dX,1.d-15)
-
-
-        CALL legauss(0.d0,gamma_max,Ng,Y,dY,1.d-15)
+        CALL legauss(0.22d0,gamma_max,Ng,Y,dY,1.d-15)
         CALL legauss(0.d0,1.d0,Nv,W,dW,1.d-15)
         !Variavel normalizada t em [0,1]; u = (1-v) t (so no termo 1-zeta)
         CALL legauss(0.d0,1.d0,Nu_ef,T,dT,1.d-15)
@@ -381,8 +379,13 @@
     !Montagem das matrizes
         CALL BUILD_ZMATRIX(zv, gv, NMZ, NMG, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
                            X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
-                           ZMATRIX, XMATRIX, kernel_type, &
-                           DEBUG_TERMOS, i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+                           ZMATRIX, XMATRIX, kernel_type)
+
+    !Diagnostico de P^(1) no ponto escolhido (fora do laco paralelo)
+        IF (DEBUG_TERMOS) CALL TERMOS_P1(18, zv, gv, NMZ, NMG, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
+                                         X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
+                                         ZMATRIX, XMATRIX, kernel_type, &
+                                         i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
 
     !Termo (1-zeta): kernel P^(1) -> P^(1) - (1-zeta) P^(2)
     !ZMATRIX representa +1/(32 pi^2) Int P^(1); entao P^(2) entra com -(1-zeta)/(32 pi^2)
@@ -398,19 +401,24 @@
              CLOSE(30)
              STOP 1
           END IF
+
+
           IF (DEBUG_TERMOS) CALL TERMOS_P2(18, zv, gv, NMZ, NMG, NMA, m1, m2, mu, Mtot, zeta, PI, &
                                            X, Y, dY, W, dW, T, dT, Nz, Ng, Nv, Nu_ef, Z2REG, Z2DEL, &
                                            i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+
+
           ZMATRIX = ZMATRIX - (1.d0 - zeta)/(32.d0*PI**2) * (Z2REG + Z2DEL)
           DEALLOCATE(Z2REG, Z2DEL)
+
         ELSE IF (kernel_type .NE. 'v' .AND. DABS(1.d0 - zeta) .GE. TOL_ZETA) THEN
           WRITE(*,'(A)') " AVISO: kernel escalar; zeta e ignorado"
         END IF
 
-          !Condicionar a matriz
-            do i = 1, nma
-                xmatrix (i,i) = xmatrix (i,i) + e
-            end do
+         !Condicionar a matriz
+         do i = 1, nma
+            xmatrix (i,i) = xmatrix (i,i) + e
+         end do
 
         !Matrizes exatamente como entram no DGGEV (testes de regressao)
         IF (SALVAR_MATRIZES) THEN
@@ -463,11 +471,9 @@
    end do
 
       WRITE(10, *) ""
-      Alfa = 1.0d0 / (wr(1) * 16.0d0 * PI)
-      WRITE(10, '(A, F20.10)') "Valor de Alfa: ", Alfa
-      WRITE(12, '(A, F20.10)') "Valor de Alfa: ", Alfa
 
-      !O DGGEV nao ordena os autovalores: confere se wr(1) e o maior real positivo
+      !O DGGEV nao ordena os autovalores: o fundamental e o maior real positivo
+      !(com zeta = 0 um par complexo espurio pode vir antes dele, em wr(1))
       i_max = 0
       wr_max = 0.d0
       DO I = 1, NMA
@@ -476,18 +482,41 @@
             i_max  = I
          END IF
       END DO
+      IF (i_max .EQ. 0) THEN
+         !Nenhum autovalor real positivo: Alfa e autovetor ficam com wr(1)
+         WRITE(*,'(A)') " AVISO: nenhum autovalor real positivo; Alfa e autovetor usam wr(1)"
+         WRITE(10,'(A)') "AVISO: nenhum autovalor real positivo; Alfa e autovetor usam wr(1)"
+         WRITE(12,'(A)') "AVISO: nenhum autovalor real positivo; Alfa e autovetor usam wr(1)"
+         WRITE(30,'(A2,A,A)') '# ', TRIM(nome), '  AVISO: nenhum autovalor real positivo; Alfa e autovetor de wr(1)'
+         WRITE(31,'(A2,A,A)') '# ', TRIM(nome), '  AVISO: nenhum autovalor real positivo; Alfa e autovetor de wr(1)'
+         i_max  = 1
+         wr_max = WR(1)
+      ELSE IF (i_max .NE. 1) THEN
+         WRITE(*,'(A,I0,A,ES16.8,A,ES16.8,A,ES16.8,A)') " AVISO: o maior autovalor real positivo e o de indice ", &
+               i_max, " (", wr_max, "), nao wr(1) = ", WR(1), " + i ", WI(1), "; Alfa e autovetor usam o de indice i_max"
+         WRITE(10,'(A,I0,A,ES24.15,A,ES24.15)') "AVISO: autovalor usado = indice ", i_max, &
+               ", nao wr(1) = ", WR(1), " + i ", WI(1)
+         WRITE(12,'(A,I0,A,ES24.15,A,ES24.15)') "AVISO: autovalor usado = indice ", i_max, &
+               ", nao wr(1) = ", WR(1), " + i ", WI(1)
+         WRITE(30,'(A2,A,A,I0,A,ES16.8,A,ES16.8)') '# ', TRIM(nome), '  AVISO: wr_max e o indice ', i_max, &
+               ', nao wr(1) = ', WR(1), ' + i ', WI(1)
+         WRITE(31,'(A2,A,A,I0,A,ES16.8,A,ES16.8)') '# ', TRIM(nome), '  AVISO: wr_max e o indice ', i_max, &
+               ', nao wr(1) = ', WR(1), ' + i ', WI(1)
+      END IF
       WRITE(10, '(A, ES24.15, A, I0)') "Maior autovalor real positivo: ", wr_max, "  indice ", i_max
       WRITE(12, '(A, ES24.15, A, I0)') "Maior autovalor real positivo: ", wr_max, "  indice ", i_max
-      IF (i_max .NE. 1) WRITE(*,'(A,I0,A,ES16.8,A)') " AVISO: o maior autovalor real positivo e o de indice ", &
-                                  i_max, " (", wr_max, "), nao wr(1)"
 
-      WRITE(10, '(9999ES16.8)') (vr(J,1), J=1, NMA)
+      Alfa = 1.0d0 / (wr_max * 16.0d0 * PI)
+      WRITE(10, '(A, F20.10)') "Valor de Alfa: ", Alfa
+      WRITE(12, '(A, F20.10)') "Valor de Alfa: ", Alfa
 
-      !Autovetores
+      WRITE(10, '(9999ES16.8)') (vr(J,i_max), J=1, NMA)
+
+      !Autovetores (do autovalor usado, indice i_max)
       !Contrução dos termos cij para dps fazer o sum cij * Spline
       do j=1,Nmz
         do i = 1, Nmg
-          c(i,j) = (vr(i + (j-1)*Nmg, 1))
+          c(i,j) = (vr(i + (j-1)*Nmg, i_max))
         enddo
       enddo
 
@@ -499,6 +528,7 @@
       CALL SYSTEM_CLOCK(T_FIM)
       T_TESTE = DBLE(T_FIM - T_INI)/DBLE(T_TAXA)
 
+      !Ajuste para proximo teste
       !Uma linha por teste: o programa de plot le os nomes daqui
       !A ultima coluna (Norma, 24 caracteres) e sobrescrita pelo programa de plot
       WRITE(30,'(1X,A60,6I6,2X,A1,7F12.6,3ES24.15,F12.2,A24)') nome, NMG, NMZ, Nz, Ng, Nv, Nu_ef, &
@@ -507,7 +537,7 @@
 
       IF (.NOT. tem_ant) Alfa_ant = Alfa
       WRITE(31,'(1X,I3,6I6,F12.6,3ES24.15,2X,A)') ii, NMG, NMZ, Nz, Ng, Nv, Nu_ef, &
-            zeta, Alfa, Alfa - Alfa_ant, wr(1), TRIM(nome)
+            zeta, Alfa, Alfa - Alfa_ant, wr_max, TRIM(nome)
       FLUSH(31)
       Alfa_ant = Alfa
       tem_ant = .TRUE.
@@ -537,7 +567,7 @@
 
       CONTAINS
 
-! -----------------------------------------------------------------------
+! ------------------SUBROUTINE ZERAR_PARAMETROS()----------------------------
 ! Marca todos os parametros como "nao definidos" antes de ler o arquivo.
 ! Os blocos &teste seguintes herdam o que nao redefinirem.
 ! -----------------------------------------------------------------------
@@ -555,7 +585,7 @@
         SALVAR_MATRIZES = .FALSE.
       END SUBROUTINE ZERAR_PARAMETROS
 
-! -----------------------------------------------------------------------
+! -----------------SUBROUTINE VALIDAR_E_NOMEAR(it)-------------------------
 ! Confere o teste corrente e, se "nome" veio vazio, gera um automatico.
 ! Interrompe o programa com uma mensagem clara em caso de erro.
 ! -----------------------------------------------------------------------
@@ -639,7 +669,7 @@
         ok = .FALSE.
       END SUBROUTINE ERRO_TESTE
 
-! -----------------------------------------------------------------------
+! -----------------FUNCTION FORMATAR_ZETA(z) RESULT(txt)-----------------------
 ! zeta em texto curto para o nome dos arquivos: 1 -> "1.0", 0.75 -> "0.75"
 ! (10 casas decimais, sem os zeros a direita)
 ! -----------------------------------------------------------------------
@@ -662,17 +692,18 @@
     END PROGRAM SPLINE_VETORIAL
 
 
-! -----------------------------------------------------------------------
+! ---------------SUBROUTINE BUILD_ZMATRIX-----------------
 ! BUILD_ZMATRIX
 ! Monta ZMATRIX (lado direito, kernel) e XMATRIX (lado esquerdo, norma).
-! A avaliacao do kernel fica nas funcoes KERNEL_*; para trocar a fisica
+! A avaliacao do kernel fica nas funcoes KERNEL_* (MODULE KERNEL_P1, em
+! kernel.f90); para trocar a fisica
 ! basta mexer nelas, sem tocar na estrutura dos lacos de quadratura.
 ! -----------------------------------------------------------------------
       SUBROUTINE BUILD_ZMATRIX(zv, gv, Nmz, Nmg, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
                                X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
-                               ZMATRIX, XMATRIX, kernel_type, &
-                               DEBUG_TERMOS, i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+                               ZMATRIX, XMATRIX, kernel_type)
       USE OMP_LIB
+      USE KERNEL_P1               !KERNEL_UPPER_*, KERNEL_LOWER_* (kernel.f90)
       IMPLICIT NONE
 
       INTEGER, INTENT(IN) :: Nmz, Nmg, NMA, Nz, Ng, Nv
@@ -683,8 +714,6 @@
       DOUBLE PRECISION, INTENT(IN) :: W(Nv), dW(Nv)
       DOUBLE PRECISION, INTENT(OUT) :: ZMATRIX(NMA,NMA), XMATRIX(NMA,NMA)
       CHARACTER, INTENT(IN) :: kernel_type
-      LOGICAL, INTENT(IN) :: DEBUG_TERMOS
-      INTEGER, INTENT(IN) :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
 
 !===================== Bases de splines no ponto corrente ==============
       DOUBLE PRECISION :: splz(Nmz), splg(Nmg)
@@ -698,23 +727,9 @@
       DOUBLE PRECISION :: zq, dzq                   !Abscissa e peso em z'
       DOUBLE PRECISION :: gp, dgp                   !Abscissa e peso em gamma'
       DOUBLE PRECISION :: v, dv                     !Abscissa e peso em v
-      DOUBLE PRECISION :: D0                        !Denominador comum do kernel
-      DOUBLE PRECISION :: Du, Dd                    !Denominadores dos ramos z'>z e z'<z
-      DOUBLE PRECISION :: Co_ku                     !Termo C0 do numerador no ramo superior
-      DOUBLE PRECISION :: Co_kd                     !Termo C0 do numerador no ramo inferior
       DOUBLE PRECISION :: peso                      !Produto splines * jacobianos * pesos
-      LOGICAL :: SING_U, SING_D                     !z=-1 (ramo Du) / z=+1 (ramo Dd): 0/0 removivel
-      DOUBLE PRECISION, PARAMETER :: TOL_SING = 1.D-10 !Tolerancia em torno de z=+-1
       DOUBLE PRECISION :: contrib_escu, contrib_escd  !Contribuicoes escalares de cada ramo
       DOUBLE PRECISION :: contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku
-      LOGICAL :: printou_termos
-
-!===================== Funcoes de kernel ===============================
-      DOUBLE PRECISION, EXTERNAL :: KERNEL_UPPER_ESC, KERNEL_LOWER_ESC
-      DOUBLE PRECISION, EXTERNAL :: KERNEL_UPPER_C0,  KERNEL_LOWER_C0
-      DOUBLE PRECISION, EXTERNAL :: KERNEL_UPPER_F1,  KERNEL_LOWER_F1
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU, DENOM_DD
-      DOUBLE PRECISION, EXTERNAL :: COEF_C0_U, COEF_C0_D
 
 !===================== Cronometragem OpenMP ============================
       DOUBLE PRECISION :: TSTART, TEND
@@ -730,7 +745,6 @@
 
         zmatrix  = 0.d0
         xmatrix  = 0.d0
-        printou_termos = .FALSE.
 
         NTHREADS = 1
 !$      NTHREADS = OMP_GET_MAX_THREADS()
@@ -765,7 +779,6 @@
 !$OMP   PRIVATE(i, j, k, l, p, q, r, index1, index2, &
 !$OMP           g, z, gp, dgp, v, dv, zq, dzq, peso, &
 !$OMP           SPLz, SPLg, &
-!$OMP           D0, Du, Dd, Co_ku, Co_kd, SING_U, SING_D, &
 !$OMP           contrib_escu, contrib_escd, &
 !$OMP           contrib_C0_kd, contrib_f1_kd, contrib_C0_ku, contrib_f1_ku, &
 !$OMP           NFEITOS_LOC, TAGORA, TDECOR, TRESTA, PCT) &
@@ -775,15 +788,6 @@
            do j=1,Nmz
               g=gv(i)
               z=zv(j)
-              !Du ~ (z+1) e Dd ~ (z-1): o numerador tem o mesmo fator, entao
-              !a razao e uma singularidade removivel (0/0) em z=-1 e z=+1.
-              !Como agora zv(1)=-1 e zv(nmz)=+1 sao nos exatos da malha, a
-              !divisao literal por Du/Dd nesses pontos e numericamente instavel
-              !(cancelamento catastrofico); a contribuicao correta e finita
-              !mas pulamos o ramo aqui, como faz o codigo frances em
-              !Kernel_droite (if(dabs(u∓1)<1.D-10) return).
-              SING_U = (DABS(z + 1.d0) .LT. TOL_SING)
-              SING_D = (DABS(z - 1.d0) .LT. TOL_SING)
               index1 = (j-1)*Nmg + i           !Juntei cada ponto (gi, zj) num vetor coluna de dimensão Nmg*Nmz
               do k=1,Nmg
                 do l=1, Nmz
@@ -825,55 +829,6 @@
                         zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escu
                      END IF
 
-      !------- Impressao dos termos para o ponto escolhido do dominio -------
-                    IF (DEBUG_TERMOS .AND. .NOT. SING_U .AND. .NOT. printou_termos &
-                        .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
-                        .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
-                        .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
-                      !Denominadores e coeficientes so sao recalculados aqui,
-                      !fora do caminho quente, para o relatorio de diagnostico.
-                      D0    = DENOM_D0(z, g, m1, m2, Mtot)
-                      Du    = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
-                      Co_ku = COEF_C0_U(z, zq, g, v, m2, Mtot)
-!$OMP CRITICAL (TERMOS_DBG)
-                      WRITE(18,*) ""
-                      WRITE(18,*) "=== PONTO DO DOMINIO (indices) ==="
-                      WRITE(18,'(A,7(I5))') " i, j, k, l, p, q, r = ", i, j, k, l, p, q, r
-                      WRITE(18,'(A,I6,A,I6)') " index1 = ", index1, "   index2 = ", index2
-                      WRITE(18,*) ""
-                      WRITE(18,*) "=== VARIAVEIS DO PONTO ==="
-                      WRITE(18,'(A,ES24.15)') " z       = ", z
-                      WRITE(18,'(A,ES24.15)') " g       = ", g
-                      WRITE(18,'(A,ES24.15)') " gp      = ", gp
-                      WRITE(18,'(A,ES24.15)') " dgp     = ", dgp
-                      WRITE(18,'(A,ES24.15)') " v       = ", v
-                      WRITE(18,'(A,ES24.15)') " dv      = ", dv
-                      WRITE(18,*) ""
-                      WRITE(18,*) "=== RAMO SUPERIOR: z' de z ate 1 ==="
-                      WRITE(18,'(A,ES24.15)') " zq      = ", zq
-                      WRITE(18,'(A,ES24.15)') " dzq     = ", dzq
-                      WRITE(18,'(A,ES24.15)') " D0      = ", D0
-                      WRITE(18,'(A,ES24.15)') " Du      = ", Du
-                      WRITE(18,'(A,ES24.15)') " Co_ku   = ", Co_ku
-                      WRITE(18,'(A,ES24.15)') " splg(k) = ", splg(k)
-                      WRITE(18,'(A,ES24.15)') " splz(l) = ", splz(l)
-                      WRITE(18,'(A,ES24.15)') " (1+z)**2                = ", (1+z)**2
-                      WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
-                      WRITE(18,'(A,ES24.15)') " v**2/Du**2              = ", v**2/(Du**2)
-                      WRITE(18,'(A,ES24.15)') " contribuicao escalar    = ", contrib_escu
-                      WRITE(18,*) ""
-                      WRITE(18,*) "--- contrib_C0_ku e contrib_f1_ku (ramo superior) ---"
-                      WRITE(18,'(A,ES24.15)') " contrib_C0_ku (com splines/jacob.)    = ", contrib_C0_ku
-                      WRITE(18,'(A,ES24.15)') " contrib_C0_ku (sem splines/jacob.)    = ", &
-                          KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-                      WRITE(18,'(A,ES24.15)') " contrib_f1_ku (com splines/jacob.)    = ", contrib_f1_ku
-                      WRITE(18,'(A,ES24.15)') " contrib_f1_ku (sem splines/jacob.)    = ", &
-                          KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-                      WRITE(18,'(A,ES24.15)') " soma contrib_C0_ku + contrib_f1_ku    = ", &
-                          contrib_C0_ku + contrib_f1_ku
-!$OMP END CRITICAL (TERMOS_DBG)
-                    END IF
-
         ! theta z’ variando de -1 até z
                      dzq=(z+1.d0)*dx(q)
                      zq=(z+1.d0)*x(q)-1.d0
@@ -895,46 +850,6 @@
                         zmatrix (index1, index2) = zmatrix (index1, index2) + contrib_escd
                      END IF
 
-      !------- Impressao dos termos para o ponto escolhido do dominio -------
-                    IF (DEBUG_TERMOS .AND. .NOT. SING_D .AND. .NOT. printou_termos &
-                        .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
-                        .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg .AND. p.EQ.p_dbg &
-                        .AND. q.EQ.q_dbg .AND. r.EQ.r_dbg) THEN
-                      D0    = DENOM_D0(z, g, m1, m2, Mtot)
-                      Dd    = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
-                      Co_kd = COEF_C0_D(z, zq, g, v, m1, Mtot)
-!$OMP CRITICAL (TERMOS_DBG)
-                      WRITE(18,*) ""
-                      WRITE(18,*) "=== RAMO INFERIOR: z' de -1 ate z ==="
-                      WRITE(18,'(A,ES24.15)') " zq      = ", zq
-                      WRITE(18,'(A,ES24.15)') " dzq     = ", dzq
-                      WRITE(18,'(A,ES24.15)') " D0      = ", D0
-                      WRITE(18,'(A,ES24.15)') " Dd      = ", Dd
-                      WRITE(18,'(A,ES24.15)') " Co_kd   = ", Co_kd
-                      WRITE(18,'(A,ES24.15)') " splg(k) = ", splg(k)
-                      WRITE(18,'(A,ES24.15)') " splz(l) = ", splz(l)
-                      WRITE(18,'(A,ES24.15)') " (1-z)**2                = ", (1-z)**2
-                      WRITE(18,'(A,ES24.15)') " 32*PI**2*D0             = ", 32*PI**2*D0
-                      WRITE(18,'(A,ES24.15)') " v**2/Dd**2              = ", v**2/(Dd**2)
-                      WRITE(18,'(A,ES24.15)') " contribuicao escalar    = ", contrib_escd
-                      WRITE(18,*) ""
-                      WRITE(18,*) "--- contrib_C0_kd e contrib_f1_kd (ramo inferior) ---"
-                      WRITE(18,'(A,ES24.15)') " contrib_C0_kd (com splines/jacob.)    = ", contrib_C0_kd
-                      WRITE(18,'(A,ES24.15)') " contrib_C0_kd (sem splines/jacob.)    = ", &
-                          KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-                      WRITE(18,'(A,ES24.15)') " contrib_f1_kd (com splines/jacob.)    = ", contrib_f1_kd
-                      WRITE(18,'(A,ES24.15)') " contrib_f1_kd (sem splines/jacob.)    = ", &
-                          KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-                      WRITE(18,'(A,ES24.15)') " soma contrib_C0_kd + contrib_f1_kd    = ", &
-                          contrib_C0_kd + contrib_f1_kd
-                      WRITE(18,*) ""
-                      WRITE(18,'(A,ES24.15)') " zmatrix(index1,index2) acumulada = ", &
-                                               zmatrix(index1,index2)
-
-                      printou_termos = .TRUE.
-!$OMP END CRITICAL (TERMOS_DBG)
-                    END IF
-
 
                              end do
                         end do
@@ -942,42 +857,16 @@
                         call SPLMD1 (zv,Nmz,z,SPLz)
                         xmatrix (index1, index2) = xmatrix (index1, index2) + &
                         1.0d0 / ((g +gp + ((1-z**2)*kappa**2) + m**2*z**2)**2)*splg(k)*splz(l)*dgp
-
-      !------- Lado esquerdo no ponto escolhido do dominio -------
-                    IF (DEBUG_TERMOS .AND. i.EQ.i_dbg .AND. j.EQ.j_dbg &
-                        .AND. k.EQ.k_dbg .AND. l.EQ.l_dbg) THEN
-!$OMP CRITICAL (TERMOS_DBG)
-                      WRITE(18,*) ""
-                      WRITE(18,*) "=== LADO ESQUERDO (xmatrix) ==="
-                      WRITE(18,'(A,ES24.15)') " gp (ultimo p = Ng)      = ", gp
-                      WRITE(18,'(A,ES24.15)') " dgp                     = ", dgp
-                      WRITE(18,'(A,ES24.15)') " denominador             = ", &
-                          (g + gp + ((1-z**2)*kappa**2) + m**2*z**2)**2
-                      WRITE(18,'(A,ES24.15)') " splg(k)                 = ", splg(k)
-                      WRITE(18,'(A,ES24.15)') " splz(l) (em z)          = ", splz(l)
-                      WRITE(18,'(A,ES24.15)') " xmatrix(index1,index2)  = ", xmatrix(index1,index2)
-                      WRITE(18,*) "--------------------------------------------------------"
-!$OMP END CRITICAL (TERMOS_DBG)
-                    END IF
                         end do
 
                enddo
            enddo
 
       !------------------ Acompanhamento do progresso ------------------
-      ! Um par (i,j) acabou de ser concluido. ATOMIC garante que o
-      ! incremento nao se perca quando duas threads terminam ao mesmo
-      ! tempo; e muito mais barato que CRITICAL e roda uma vez por par,
-      ! nao por iteracao interna, entao nao pesa no desempenho.
-      ! A copia para NFEITOS_LOC evita ler a variavel compartilhada
-      ! (que outra thread pode estar alterando) na hora de imprimir.
 !$OMP ATOMIC CAPTURE
               NFEITOS = NFEITOS + 1
               NFEITOS_LOC = NFEITOS
 !$OMP END ATOMIC
-
-              ! So a thread que fechou um multiplo de NPASSO imprime,
-              ! para nao poluir a saida com Nmg*Nmz linhas.
               IF (MOD(NFEITOS_LOC,NPASSO).EQ.0 .OR. NFEITOS_LOC.EQ.NTOTAL) THEN
                  TAGORA = 0.d0
 !$               TAGORA = OMP_GET_WTIME()
@@ -1003,6 +892,166 @@
 !$                             TEND-TSTART, " s"
 
       END SUBROUTINE BUILD_ZMATRIX
+
+
+! -----------------------------------------------------------------------
+! TERMOS_P1 — diagnostico de P^(1) em termos.dat, no ponto
+! (i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg).
+! Reavalia cada termo do kernel (KERNEL_UPPER_C0, KERNEL_UPPER_F1,
+! KERNEL_LOWER_C0, KERNEL_LOWER_F1 ou os escalares) so nesse ponto,
+! fora do laco paralelo, para nao pesar na montagem.
+! ZMATRIX e XMATRIX sao lidas ja montadas: ZMATRIX ainda sem o termo
+! (1-zeta) e XMATRIX ainda sem o regulador e na diagonal.
+!
+! Du ~ (z+1) e Dd ~ (z-1): o numerador tem o mesmo fator, entao a razao
+! e uma singularidade removivel (0/0) em z=-1 (ramo superior) e z=+1
+! (ramo inferior). Nesses pontos o ramo correspondente nao e impresso.
+! -----------------------------------------------------------------------
+      SUBROUTINE TERMOS_P1(iu, zv, gv, Nmz, Nmg, NMA, m, m1, m2, mu, kappa, Mtot, PI, &
+                           X, dX, Y, dY, W, dW, Nz, Ng, Nv, &
+                           ZMATRIX, XMATRIX, kernel_type, &
+                           i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg)
+      USE KERNEL_P1
+      IMPLICIT NONE
+      INTEGER, INTENT(IN) :: iu, Nmz, Nmg, NMA, Nz, Ng, Nv
+      DOUBLE PRECISION, INTENT(IN) :: zv(*), gv(*)
+      DOUBLE PRECISION, INTENT(IN) :: m, m1, m2, mu, kappa, Mtot, PI
+      DOUBLE PRECISION, INTENT(IN) :: X(Nz), dX(Nz), Y(Ng), dY(Ng), W(Nv), dW(Nv)
+      DOUBLE PRECISION, INTENT(IN) :: ZMATRIX(NMA,NMA), XMATRIX(NMA,NMA)
+      CHARACTER, INTENT(IN) :: kernel_type
+      INTEGER, INTENT(IN) :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
+
+      DOUBLE PRECISION :: splz(Nmz), splg(Nmg)
+      DOUBLE PRECISION :: g, z, gp, dgp, v, dv, zq, dzq, peso
+      DOUBLE PRECISION :: D0, Du, Dd, Co_ku, Co_kd
+      DOUBLE PRECISION :: kC0, kF1, kESC, denom_x
+      INTEGER :: index1, index2
+      DOUBLE PRECISION, PARAMETER :: TOL_SING = 1.D-10 !Tolerancia em torno de z=+-1
+
+      IF (i_dbg .GT. Nmg .OR. j_dbg .GT. Nmz .OR. k_dbg .GT. Nmg .OR. l_dbg .GT. Nmz &
+          .OR. p_dbg .GT. Ng .OR. q_dbg .GT. Nz .OR. r_dbg .GT. Nv) THEN
+         WRITE(iu,*) ""
+         WRITE(iu,*) "AVISO: ponto de diagnostico fora da malha; termos de P^(1) nao impressos"
+         RETURN
+      END IF
+
+      g   = gv(i_dbg)
+      z   = zv(j_dbg)
+      gp  = Y(p_dbg)
+      dgp = dY(p_dbg)
+      v   = W(r_dbg)
+      dv  = dW(r_dbg)
+      index1 = (j_dbg-1)*Nmg + i_dbg
+      index2 = (l_dbg-1)*Nmg + k_dbg
+      D0 = DENOM_D0(z, g, m1, m2, Mtot)
+      call SPLMD2 (gv,Nmg,gp,splg)
+
+      WRITE(iu,*) ""
+      WRITE(iu,*) "=== PONTO DO DOMINIO (indices) ==="
+      WRITE(iu,'(A,7(I5))') " i, j, k, l, p, q, r = ", i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
+      WRITE(iu,'(A,I6,A,I6)') " index1 = ", index1, "   index2 = ", index2
+      WRITE(iu,*) ""
+      WRITE(iu,*) "=== VARIAVEIS DO PONTO ==="
+      WRITE(iu,'(A,ES24.15)') " z       = ", z
+      WRITE(iu,'(A,ES24.15)') " g       = ", g
+      WRITE(iu,'(A,ES24.15)') " gp      = ", gp
+      WRITE(iu,'(A,ES24.15)') " dgp     = ", dgp
+      WRITE(iu,'(A,ES24.15)') " v       = ", v
+      WRITE(iu,'(A,ES24.15)') " dv      = ", dv
+      WRITE(iu,'(A,ES24.15)') " D0      = ", D0
+      WRITE(iu,'(A,ES24.15)') " 32*PI**2*D0 = ", 32*PI**2*D0
+      WRITE(iu,'(A,ES24.15)') " splg(k) = ", splg(k_dbg)
+
+      !---------------- Ramo superior: z' de z ate 1 ----------------
+      WRITE(iu,*) ""
+      WRITE(iu,*) "=== RAMO SUPERIOR: z' de z ate 1 ==="
+      IF (DABS(z + 1.d0) .LT. TOL_SING) THEN
+         WRITE(iu,*) " z = -1: singularidade removivel (0/0) em Du; ramo nao impresso"
+      ELSE
+         dzq = (1.d0-z)*dX(q_dbg)
+         zq  = (1.d0-z)*X(q_dbg)+z
+         call SPLMD1 (zv,Nmz,zq,splz)
+         peso  = splg(k_dbg)*splz(l_dbg)*dzq*dgp*dv
+         Du    = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
+         WRITE(iu,'(A,ES24.15)') " zq      = ", zq
+         WRITE(iu,'(A,ES24.15)') " dzq     = ", dzq
+         WRITE(iu,'(A,ES24.15)') " Du      = ", Du
+         WRITE(iu,'(A,ES24.15)') " v**2/Du**2 = ", v**2/(Du**2)
+         WRITE(iu,'(A,ES24.15)') " splz(l) = ", splz(l_dbg)
+         WRITE(iu,'(A,ES24.15)') " peso (splines*jacob.*Gauss) = ", peso
+         IF (kernel_type .EQ. 'v') THEN
+            Co_ku = COEF_C0_U(z, zq, g, v, m2, Mtot)
+            kC0   = KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            kF1   = KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            WRITE(iu,'(A,ES24.15)') " Co_ku   = ", Co_ku
+            WRITE(iu,*) "--- KERNEL_UPPER_C0 / KERNEL_UPPER_F1 ---"
+            WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_C0 (sem peso) = ", kC0
+            WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_C0 (com peso) = ", kC0*peso
+            WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_F1 (sem peso) = ", kF1
+            WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_F1 (com peso) = ", kF1*peso
+            WRITE(iu,'(A,ES24.15)') " -C0 + f1 (com peso, entra na zmatrix) = ", (kF1 - kC0)*peso
+         ELSE
+            kESC = KERNEL_UPPER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            WRITE(iu,'(A,ES24.15)') " (1+z)**2 = ", (1.d0+z)**2
+            WRITE(iu,*) "--- KERNEL_UPPER_ESC ---"
+            WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_ESC (sem peso) = ", kESC
+            WRITE(iu,'(A,ES24.15)') " KERNEL_UPPER_ESC (com peso) = ", kESC*peso
+         END IF
+      END IF
+
+      !---------------- Ramo inferior: z' de -1 ate z ----------------
+      WRITE(iu,*) ""
+      WRITE(iu,*) "=== RAMO INFERIOR: z' de -1 ate z ==="
+      IF (DABS(z - 1.d0) .LT. TOL_SING) THEN
+         WRITE(iu,*) " z = +1: singularidade removivel (0/0) em Dd; ramo nao impresso"
+      ELSE
+         dzq = (z+1.d0)*dX(q_dbg)
+         zq  = (z+1.d0)*X(q_dbg)-1.d0
+         call SPLMD1 (zv,Nmz,zq,splz)
+         peso  = splg(k_dbg)*splz(l_dbg)*dzq*dgp*dv
+         Dd    = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
+         WRITE(iu,'(A,ES24.15)') " zq      = ", zq
+         WRITE(iu,'(A,ES24.15)') " dzq     = ", dzq
+         WRITE(iu,'(A,ES24.15)') " Dd      = ", Dd
+         WRITE(iu,'(A,ES24.15)') " v**2/Dd**2 = ", v**2/(Dd**2)
+         WRITE(iu,'(A,ES24.15)') " splz(l) = ", splz(l_dbg)
+         WRITE(iu,'(A,ES24.15)') " peso (splines*jacob.*Gauss) = ", peso
+         IF (kernel_type .EQ. 'v') THEN
+            Co_kd = COEF_C0_D(z, zq, g, v, m1, Mtot)
+            kC0   = KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            kF1   = KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            WRITE(iu,'(A,ES24.15)') " Co_kd   = ", Co_kd
+            WRITE(iu,*) "--- KERNEL_LOWER_C0 / KERNEL_LOWER_F1 ---"
+            WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_C0 (sem peso) = ", kC0
+            WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_C0 (com peso) = ", kC0*peso
+            WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_F1 (sem peso) = ", kF1
+            WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_F1 (com peso) = ", kF1*peso
+            WRITE(iu,'(A,ES24.15)') " -C0 + f1 (com peso, entra na zmatrix) = ", (kF1 - kC0)*peso
+         ELSE
+            kESC = KERNEL_LOWER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
+            WRITE(iu,'(A,ES24.15)') " (1-z)**2 = ", (1.d0-z)**2
+            WRITE(iu,*) "--- KERNEL_LOWER_ESC ---"
+            WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_ESC (sem peso) = ", kESC
+            WRITE(iu,'(A,ES24.15)') " KERNEL_LOWER_ESC (com peso) = ", kESC*peso
+         END IF
+      END IF
+
+      !---------------- Lado esquerdo (xmatrix) ----------------
+      call SPLMD1 (zv,Nmz,z,splz)
+      denom_x = (g + gp + ((1-z**2)*kappa**2) + m**2*z**2)**2
+      WRITE(iu,*) ""
+      WRITE(iu,*) "=== LADO ESQUERDO (xmatrix) em gp(p_dbg) ==="
+      WRITE(iu,'(A,ES24.15)') " denominador             = ", denom_x
+      WRITE(iu,'(A,ES24.15)') " splz(l) (em z)          = ", splz(l_dbg)
+      WRITE(iu,'(A,ES24.15)') " contribuicao de p_dbg   = ", splg(k_dbg)*splz(l_dbg)*dgp/denom_x
+
+      !---------------- Elementos de matriz ja montados ----------------
+      WRITE(iu,*) ""
+      WRITE(iu,*) "=== ELEMENTOS MONTADOS (index1, index2) ==="
+      WRITE(iu,'(A,ES24.15)') " zmatrix (P^(1), sem termo 1-zeta) = ", ZMATRIX(index1,index2)
+      WRITE(iu,'(A,ES24.15)') " xmatrix (sem regulador e)         = ", XMATRIX(index1,index2)
+      WRITE(iu,*) "--------------------------------------------------------"
+      END SUBROUTINE TERMOS_P1
 
 
 ! -----------------------------------------------------------------------
@@ -1066,15 +1115,15 @@
 !$OMP   PRIVATE(i, j, k, l, p, q, ramo, index1, g, z, zq, dzq, valor, ok_pt, &
 !$OMP           splz, tmp) &
 !$OMP   REDUCTION(.AND.:ok) COLLAPSE(2) SCHEDULE(DYNAMIC)
-        do i = 1, Nmg
-           do j = 1, Nmz
+        do i = 1, Nmg !z
+           do j = 1, Nmz !gamma
               g = gv(i)
               z = zv(j)
               index1 = (j-1)*Nmg + i
 
         !---------------- Parte regular: dois ramos em z' ----------------
-              do q = 1, Nz
-                 do ramo = 1, -1, -2
+              do q = 1, Nz !z'
+                 do ramo = 1, -1, -2 !Itera os dois ramos 1-> z'>z -1-> z'<z
                     IF (ramo .EQ. 1) THEN
                        dzq = (1.d0-z)*dX(q)
                        zq  = (1.d0-z)*X(q)+z
@@ -1085,7 +1134,7 @@
                     call SPLMD1 (zv,Nmz,zq,splz)
 
                     tmp = 0.d0
-                    do p = 1, Ng
+                    do p = 1, Ng !gamma'
                        CALL P2_REG(ramo, g, z, Y(p), zq, m1, m2, mu, Mtot, zeta, &
                                    W, dW, Nv, T, dT, Nu, valor, ok_pt)
                        IF (.NOT. ok_pt) THEN
@@ -1097,8 +1146,8 @@
                        tmp(:) = tmp(:) + SG(:,p)*(valor*dY(p)*dzq)
                     end do
 
-                    do l = 1, Nmz
-                       do k = 1, Nmg
+                    do l = 1, Nmz !splz
+                       do k = 1, Nmg !splg
                           Z2REG(index1, (l-1)*Nmg + k) = Z2REG(index1, (l-1)*Nmg + k) &
                                                          + tmp(k)*splz(l)
                        end do
@@ -1152,7 +1201,7 @@
       DOUBLE PRECISION, INTENT(IN) :: X(Nz), Y(Ng), dY(Ng), W(Nv), dW(Nv), T(Nu), dT(Nu)
       DOUBLE PRECISION, INTENT(IN) :: Z2REG(NMA,NMA), Z2DEL(NMA,NMA)
       INTEGER, INTENT(IN) :: i_dbg, j_dbg, k_dbg, l_dbg, p_dbg, q_dbg, r_dbg
-      DOUBLE PRECISION :: g, z, gp, zq, v, u, ku, kd, KDc, lD, fu, fd, Nku, Nkd, D0, val
+      DOUBLE PRECISION :: g, z, gp, zq, v, u, kut, kdt, c, KDc, lD, D2, Nt, D0, val
       DOUBLE PRECISION :: Wv(1), dWv(1)
       INTEGER :: ramo, index1, index2
       LOGICAL :: ok_pt
@@ -1167,7 +1216,7 @@
       u  = (1.d0 - v)*T(1)
       index1 = (j_dbg-1)*Nmg + i_dbg
       index2 = (l_dbg-1)*Nmg + k_dbg
-      CALL POLOS_KMENOS(z, g, m1, m2, Mtot, ku, kd)
+      CALL POLOS_KMENOS(z, g, m1, m2, Mtot, kut, kdt)
       D0 = D0_P2(z, g, m1, m2, Mtot)
 
       WRITE(iu,*) ""
@@ -1175,8 +1224,8 @@
       WRITE(iu,'(A,ES24.15)') " zeta    = ", zeta
       WRITE(iu,'(A,ES24.15)') " v       = ", v
       WRITE(iu,'(A,ES24.15,A)') " u       = ", u, "   (u = (1-v) T(1))"
-      WRITE(iu,'(A,ES24.15)') " k_u     = ", ku
-      WRITE(iu,'(A,ES24.15)') " k_d     = ", kd
+      WRITE(iu,'(A,ES24.15)') " k~_u = (1+z) k_u = ", kut
+      WRITE(iu,'(A,ES24.15)') " k~_d = (1-z) k_d = ", kdt
       WRITE(iu,'(A,ES24.15)') " D0      = ", D0
       do ramo = 1, -1, -2
          IF (ramo .EQ. 1) THEN
@@ -1188,23 +1237,28 @@
          END IF
          KDc = KD_P2(z, zq, v, Mtot)
          lD  = LD_P2(z, zq, g, gp, v, u, m1, m2, mu, Mtot, zeta)
-         fu  = KDc*ku + lD
-         fd  = KDc*kd + lD
-         Nku = NUM_P2(ku, z, zq, g, v, fu, Mtot)
-         Nkd = NUM_P2(kd, z, zq, g, v, fd, Mtot)
+         IF (ramo .EQ. 1) THEN
+            c  = 1.d0 + z
+            D2 = DENOM_DU2(z, zq, g, gp, v, u, m1, m2, mu, Mtot, zeta)
+            Nt = NUM_P2(kut, c, z, zq, g, v, D2, Mtot)
+         ELSE
+            c  = 1.d0 - z
+            D2 = DENOM_DD2(z, zq, g, gp, v, u, m1, m2, mu, Mtot, zeta)
+            Nt = NUM_P2(kdt, c, z, zq, g, v, D2, Mtot)
+         END IF
          WRITE(iu,'(A,ES24.15)') " zq      = ", zq
          WRITE(iu,'(A,ES24.15)') " K_D     = ", KDc
          WRITE(iu,'(A,ES24.15)') " l_D^(2) = ", lD
          IF (ramo .EQ. 1) THEN
-            WRITE(iu,'(A,ES24.15)') " f_u     = ", fu
-            WRITE(iu,'(A,ES24.15)') " D_u^(2) = -(1+z) f_u = ", -(1.d0+z)*fu
-            WRITE(iu,'(A,ES24.15)') " N_ku    = ", Nku
-            WRITE(iu,'(A,ES24.15)') " v^2 N_ku/(2 D0 f_u^3) = ", v**2*Nku/(2.d0*D0*fu**3)
+            WRITE(iu,'(A,ES24.15)') " Du2 (DENOM_DU2)              = ", D2
+            WRITE(iu,'(A,ES24.15)') " -(K_D k~_u + (1+z) l_D)      = ", -(KDc*kut + c*lD)
+            WRITE(iu,'(A,ES24.15)') " N~_ku = (1+z)^2 N_ku = ", Nt
+            WRITE(iu,'(A,ES24.15)') " -(1+z) v^2 N~_ku/(2 D0 Du2^3) = ", -c*v**2*Nt/(2.d0*D0*D2**3)
          ELSE
-            WRITE(iu,'(A,ES24.15)') " f_d     = ", fd
-            WRITE(iu,'(A,ES24.15)') " D_d^(2) = -(1-z) f_d = ", -(1.d0-z)*fd
-            WRITE(iu,'(A,ES24.15)') " N_kd    = ", Nkd
-            WRITE(iu,'(A,ES24.15)') " v^2 N_kd/(2 D0 f_d^3) = ", v**2*Nkd/(2.d0*D0*fd**3)
+            WRITE(iu,'(A,ES24.15)') " Dd2 (DENOM_DD2)              = ", D2
+            WRITE(iu,'(A,ES24.15)') " -(K_D k~_d + (1-z) l_D)      = ", -(KDc*kdt + c*lD)
+            WRITE(iu,'(A,ES24.15)') " N~_kd = (1-z)^2 N_kd = ", Nt
+            WRITE(iu,'(A,ES24.15)') " -(1-z) v^2 N~_kd/(2 D0 Dd2^3) = ", -c*v**2*Nt/(2.d0*D0*D2**3)
          END IF
          Wv(1) = v;  dWv(1) = 1.d0
          CALL P2_REG(ramo, g, z, gp, zq, m1, m2, mu, Mtot, zeta, Wv, dWv, 1, T, dT, Nu, val, ok_pt)
@@ -1220,204 +1274,6 @@
       WRITE(iu,*) "--------------------------------------------------------"
       END SUBROUTINE TERMOS_P2
 
-
-! =======================================================================
-!                    DENOMINADORES COMUNS DO KERNEL
-! =======================================================================
-
-! -----------------------------------------------------------------------
-! D0 — denominador comum aos dois ramos (funcao apenas de z e gamma)
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION DENOM_D0(z, g, m1, m2, Mtot)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, g, m1, m2, Mtot
-
-      DENOM_D0 = 0.25d0*(4.d0*g + Mtot**2*(z**2 - 1.d0) &
-                 + 2.d0*m1**2*(z + 1.d0) - 2.d0*m2**2*(z - 1.d0))
-      END FUNCTION DENOM_D0
-
-
-! -----------------------------------------------------------------------
-! Du — denominador do ramo superior (z' em [z, 1])
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot
-
-      DENOM_DU = 0.25d0 * ( &
-            Mtot**2 * (-v) * (z + 1.0d0) * (zq + 1.0d0) * ((v - 1.0d0) * z - v * zq + 1.0d0) &
-            + v * ( m1**2 * (z + 1.0d0) + 2.0d0 * m1 * m2 * (z + 1.0d0) + &
-                    m2**2 * (4.0d0 * v * z - 4.0d0 * v * zq - 3.0d0 * z + 4.0d0 * zq + 1.0d0) - &
-                    4.0d0 * g * (v - 1.0d0) * (zq + 1.0d0) + 4.0d0 * gp * (z + 1.0d0) ) &
-            - 4.0d0 * mu**2 * (v - 1.0d0) * (z + 1.0d0) )
-      END FUNCTION DENOM_DU
-
-
-! -----------------------------------------------------------------------
-! Dd — denominador do ramo inferior (z' em [-1, z])
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot
-
-      DENOM_DD = 0.25d0 * ( &
-          Mtot**2 * v * (z - 1.0d0) * (zq - 1.0d0) * ((v - 1.0d0) * z - v * zq - 1.0d0) &
-          + v * ( m1**2 * (-4.0d0 * v * z + 4.0d0 * (v - 1.0d0) * zq + 3.0d0 * z + 1.0d0) &
-                  - 2.0d0 * m1 * m2 * (z - 1.0d0) - m2**2 * z + m2**2 &
-                  + 4.0d0 * (gp + g * (v - 1.0d0) * (zq - 1.0d0)) - 4.0d0 * gp * z ) &
-          + 4.0d0 * mu**2 * (v - 1.0d0) * (z - 1.0d0) )
-      END FUNCTION DENOM_DD
-
-
-! =======================================================================
-!                    COEFICIENTES VETORIAIS C0
-! =======================================================================
-
-! -----------------------------------------------------------------------
-! C0 do ramo superior
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION COEF_C0_U(z, zq, g, v, m2, Mtot)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, v, m2, Mtot
-
-      !COEF_C0_U = (-1.d0)*0.25d0*(z + 1.d0) &
-          !*(Mtot**2*(z + 1.d0)*((v*zq + v - 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
-            !+ 4.d0*(v - 2.d0)*(m2**2*(-v*z + v*zq + 2.d0*z) + g*(v*zq + v - 2.d0)))
-
-      COEF_C0_U = (-2 + v)*(1 + z)*(m2**2*((-2 + v)*z - v*zq) - g*(-2 + v + v*zq)) - & 
-                    (Mtot**2*(1 + z)**2*(4 + ((-2 + v)*z - v*zq)*(-2 + v + v*zq)))/4.
-      END FUNCTION COEF_C0_U
-
-
-! -----------------------------------------------------------------------
-! C0 do ramo inferior
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION COEF_C0_D(z, zq, g, v, m1, Mtot)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, v, m1, Mtot
-
-     ! COEF_C0_D = (-1.d0)*0.25d0*(z - 1.d0) &
-         ! *(Mtot**2*(z - 1.d0)*((v*(zq - 1.d0) + 2.d0)*((v - 2.d0)*z - v*zq) + 4.d0) &
-           ! + 4.d0*(v - 2.d0)*(m1**2*(-v*z + v*zq + 2.d0*z) + g*(v*(zq - 1.d0) + 2.d0)))
-
-      COEF_C0_D = (-2 + v)*(-1 + z)*(g*(-2 + v - v*zq) + m1**2*((-2 + v)*z - v*zq)) - &
-            (Mtot**2*(-1 + z)**2*(4 + (2 + v*(-1 + zq))*((-2 + v)*z - v*zq)))/4.
-      END FUNCTION COEF_C0_D
-
-
-! =======================================================================
-!                        KERNEL ESCALAR
-! Numerador (1 +- z)**2; nao ha termo f1. Mesma estrutura dos kernels
-! vetoriais, de modo que o builder trate os dois casos igualmente.
-! =======================================================================
-
-! -----------------------------------------------------------------------
-! KERNEL_UPPER_ESC — integrando escalar para z' em [z, 1]
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION KERNEL_UPPER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
-      DOUBLE PRECISION :: D0, Du
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU
-
-      D0 = DENOM_D0(z, g, m1, m2, Mtot)
-      Du = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
-
-      KERNEL_UPPER_ESC = 1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * (1.d0 + z)**2
-      END FUNCTION KERNEL_UPPER_ESC
-
-
-! -----------------------------------------------------------------------
-! KERNEL_LOWER_ESC — integrando escalar para z' em [-1, z]
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION KERNEL_LOWER_ESC(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
-      DOUBLE PRECISION :: D0, Dd
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DD
-
-      D0 = DENOM_D0(z, g, m1, m2, Mtot)
-      Dd = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
-
-      KERNEL_LOWER_ESC = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * (1.d0 - z)**2
-      END FUNCTION KERNEL_LOWER_ESC
-
-
-! =======================================================================
-!                        KERNEL VETORIAL
-! O numerador se separa em duas partes, tratadas por funcoes distintas:
-!   C0 -> pesa 1/Du**2 (ou 1/Dd**2)
-!   f1 -> pesa 1/Du    (ou 1/Dd),  com fator 2
-! O builder soma -(C0 + f1) a zmatrix.
-! =======================================================================
-
-! -----------------------------------------------------------------------
-! KERNEL_UPPER_C0 — parte C0 do kernel vetorial, z' em [z, 1]
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION KERNEL_UPPER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
-      DOUBLE PRECISION :: D0, Du, Co_ku
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU, COEF_C0_U
-
-      D0    = DENOM_D0(z, g, m1, m2, Mtot)
-      Du    = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
-      Co_ku = COEF_C0_U(z, zq, g, v, m2, Mtot)
-
-      KERNEL_UPPER_C0 = 1.d0 / (32*PI**2*D0) * (v**2 / (Du**2)) * Co_ku
-      END FUNCTION KERNEL_UPPER_C0
-
-
-! -----------------------------------------------------------------------
-! KERNEL_UPPER_F1 — parte f1 do kernel vetorial, z' em [z, 1]
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION KERNEL_UPPER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
-      DOUBLE PRECISION :: D0, Du
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DU
-
-      D0 = DENOM_D0(z, g, m1, m2, Mtot)
-      Du = DENOM_DU(z, zq, g, gp, v, m1, m2, mu, Mtot)
-
-      KERNEL_UPPER_F1 = 2.d0 / (32*PI**2*D0) * (v**2 / Du) * (z + 1.d0)
-      END FUNCTION KERNEL_UPPER_F1
-
-
-! -----------------------------------------------------------------------
-! KERNEL_LOWER_C0 — parte C0 do kernel vetorial, z' em [-1, z]
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION KERNEL_LOWER_C0(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
-      DOUBLE PRECISION :: D0, Dd, Co_kd
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DD, COEF_C0_D
-
-      D0    = DENOM_D0(z, g, m1, m2, Mtot)
-      Dd    = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
-      Co_kd = COEF_C0_D(z, zq, g, v, m1, Mtot)
-
-      KERNEL_LOWER_C0 = 1.d0 / (32*PI**2*D0) * (v**2 / (Dd**2)) * Co_kd
-      END FUNCTION KERNEL_LOWER_C0
-
-
-! -----------------------------------------------------------------------
-! KERNEL_LOWER_F1 — parte f1 do kernel vetorial, z' em [-1, z]
-! -----------------------------------------------------------------------
-      DOUBLE PRECISION FUNCTION KERNEL_LOWER_F1(z, zq, g, gp, v, m1, m2, mu, Mtot, PI)
-      IMPLICIT NONE
-      DOUBLE PRECISION, INTENT(IN) :: z, zq, g, gp, v, m1, m2, mu, Mtot, PI
-      DOUBLE PRECISION :: D0, Dd
-      DOUBLE PRECISION, EXTERNAL :: DENOM_D0, DENOM_DD
-
-      D0 = DENOM_D0(z, g, m1, m2, Mtot)
-      Dd = DENOM_DD(z, zq, g, gp, v, m1, m2, mu, Mtot)
-
-      KERNEL_LOWER_F1 = 2.d0 / (32*PI**2*D0) * (v**2 / Dd) * (1.d0 - z)
-      END FUNCTION KERNEL_LOWER_F1
-
-    
-    
     
     !Rotinas
         !Spline 1

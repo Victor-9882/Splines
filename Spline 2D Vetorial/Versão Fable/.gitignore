@@ -1,0 +1,15 @@
+# Versão Fable: versiona fontes, ferramentas, documentação e scripts; saídas ficam fora
+!*.py
+!*.md
+!*.sh
+!*.slurm
+!*.agr
+!*.csv
+!*.toml
+!Makefile
+bin/
+logs/
+Testes/
+*.mod
+*.o
+__pycache__/
