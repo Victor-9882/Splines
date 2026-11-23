@@ -97,9 +97,14 @@ def para_png(agr_path, png_path):
     exe = shutil.which("gracebat")
     if not exe:
         return False, "gracebat não encontrado no PATH"
-    os.makedirs(os.path.dirname(os.path.abspath(png_path)), exist_ok=True)
+    png_path = os.path.abspath(png_path)
+    pasta = os.path.dirname(png_path)
+    os.makedirs(pasta, exist_ok=True)
+    # o gracebat aborta ("buffer overflow") com caminhos de ~256 bytes ou mais:
+    # roda dentro da pasta do PNG, com caminhos relativos curtos
     r = subprocess.run([exe, "-hardcopy", "-hdevice", "PNG", "-printfile",
-                        png_path, agr_path], capture_output=True, text=True)
+                        os.path.basename(png_path), os.path.relpath(os.path.abspath(agr_path), pasta)],
+                       capture_output=True, text=True, cwd=pasta)
     saida = (r.stdout + r.stderr).strip()
     ok = r.returncode == 0 and os.path.isfile(png_path)
     if saida:

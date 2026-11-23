@@ -5,6 +5,7 @@
 !*.slurm
 !*.agr
 !*.csv
+!*.toml
 !Makefile
 bin/
 logs/
